@@ -137,32 +137,30 @@ func TestSequenceReportsLowestFailingFrame(t *testing.T) {
 	}
 }
 
-func TestSequenceCancellation(t *testing.T) {
-	// 600 frames take far longer than the watcher needs to notice frame 2.
-	r := spinRenderer(t, 600)
-	dir := t.TempDir()
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
+// cancelAfterFile is a context that reports context.Canceled from the moment
+// the named file exists. Sequence checks ctx.Err() before it starts each frame,
+// so with one worker the run stops at a fixed frame whatever the machine speed.
+type cancelAfterFile struct {
+	context.Context //nolint:containedctx // a test context wrapper that overrides Err
+	path            string
+}
 
-	go func() {
-		for ctx.Err() == nil {
-			if _, err := os.Stat(filepath.Join(dir, "frame_000002.png")); err == nil {
-				cancel()
-				return
-			}
-			time.Sleep(time.Millisecond)
-		}
-	}()
+func (c cancelAfterFile) Err() error {
+	if _, err := os.Stat(c.path); err == nil {
+		return context.Canceled
+	}
+	return c.Context.Err()
+}
+
+func TestSequenceCancellation(t *testing.T) {
+	r := spinRenderer(t, 24)
+	dir := t.TempDir()
+	ctx := cancelAfterFile{Context: t.Context(), path: filepath.Join(dir, "frame_000002.png")}
 
 	seq, err := r.Sequence(ctx, dir)
 	require.Nil(t, seq)
 	require.Equal(t, context.Canceled, err, "ctx.Err() comes back unwrapped")
-	names := listDir(t, dir)
-	require.Contains(t, names, "frame_000002.png")
-	require.Less(t, len(names), 600)
-	for _, n := range names {
-		require.False(t, strings.HasSuffix(n, ".tmp"), "leftover temporary file %s", n)
-	}
+	require.Equal(t, []string{"frame_000000.png", "frame_000001.png", "frame_000002.png"}, listDir(t, dir))
 }
 
 func TestSequenceNilContext(t *testing.T) {
