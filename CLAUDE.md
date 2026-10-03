@@ -16,8 +16,9 @@ kinetograph writes no video.
 - Reshape (pass 2): a body as a Go function of parameters, rebuilt when they change.
 - Output: `render` builds one solidlens scene per frame and writes one PNG per frame.
 
-**Current state: design only.** `docs/design.md` is the contract. §5 there is the public
-API of the initial pass, §9 names what each later pass adds, §12 points at where each
+**Current state: pass 1 (the initial pass) is implemented.** `docs/design.md` is the contract.
+§5 there is the public API of the initial pass, §9 names what each later pass adds (reshape,
+animated appearance and the landing-page clip are not built), §12 points at where each
 settled choice lives.
 
 ## Read before you write
