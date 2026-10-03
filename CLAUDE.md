@@ -23,9 +23,8 @@ kinetograph writes no video.
 **Current state: pass 1 (the initial pass), pass 2 (reshape) and pass 3 (animated
 appearance) are implemented.** `docs/design.md` is the contract. §5.1–§5.6 there are the
 initial pass's public API, §5.7–§5.8 reshape's, §9 "Pass 3" animated appearance's. §9 also
-names pass 4, the landing-page clip in `_clips/decad-landing/`, built so far with pass 1 and
-pass 2 only (its pass-3 effects are not added yet), and §12 points at where each settled choice
-lives.
+names pass 4, the landing-page clip in `_clips/decad-landing/`, built with passes 1, 2 and 3
+(act B uses pass 1 only), and §12 points at where each settled choice lives.
 
 ## Read before you write
 

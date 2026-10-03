@@ -987,11 +987,11 @@ the clip module.
 #### Which passes the clip uses
 
 Each beat below is written three ways: with pass 1 alone, with reshape (pass 2, §5.7), and with node lights and
-fades (pass 3). The first pass-4 implementation builds:
+fades (pass 3). The clip builds:
 
 - with pass 2 where its parameter ramps are probed: act A (extrude, holes, fillet, chamfer);
 - with pass 1 where they are not: act B, until its ranges are probed (see "decad constraints");
-- no pass-3 effect until pass 3 is implemented. Each pass-3 effect is then added to the shot that names it.
+- with pass 3 in the three beats that name a pass-3 effect: A2's see-through tools, A3's light and act C's light.
 
 The module carries one realisation of each shot at a time. A later realisation replaces the earlier one rather
 than adding a mode.
@@ -1003,7 +1003,7 @@ than adding a mode.
 | Length | 24.0 s: 720 frames at 30 fps |
 | Frame | 1280×720 (16:9; both even, as `yuv420p` needs) |
 | MP4 | H.264, `yuv420p`, CRF 18, `+faststart` |
-| GIF | 800×450 at 15 fps, 128-colour palette. The first implementation's 24 s encode to 7.3 MB with ffmpeg 6.1.1 |
+| GIF | 800×450 at 15 fps, 128-colour palette. The 24 s encode to 6.8 MB with ffmpeg 6.1.1 |
 | Colours | `_gallery/scene.go`'s background and five part colours; the wordmark keeps `_gallery/hero.go`'s colours (below) |
 | Lights | act A: `_gallery/scene.go`'s two directional lights and its point light; act B: the two directional lights only; act C: `_gallery/hero.go`'s two directional lights and its point light |
 | Chord | 0.05 mm, as the demo uses; 0.02 mm for the wordmark, as `_gallery/hero.go` uses |
@@ -1013,9 +1013,11 @@ point light by `max(1, d²)` with `d` in millimetres (pass 3), so that light add
 first shelf slot, 336 mm away, and less at the slots farther along the 875 mm dolly. The two directional lights do
 not depend on position, so every part on the shelf is lit alike.
 
-For scale, the first implementation renders its 750 frames at 1280×720 (720 frames of video plus the two 0.5 s
-overlaps) in about 4 s wall time and 56 s of CPU on a 24-thread machine, and ffmpeg assembles the MP4 and the GIF in
-6.5 s.
+For scale, the clip renders its 750 frames at 1280×720 (720 frames of video plus the two 0.5 s overlaps) in about
+5 s wall time and 61 s of CPU on a 24-thread machine, and ffmpeg assembles the MP4 and the GIF in 6.2 s. Per shot,
+`build` takes 37 s of CPU (2.4 s wall), `shapes` 15 s and `wordmark` 10 s. The A2 fades are most of `build`'s
+cost above the 29 s it takes with opaque tools: 56 frames draw three fading tools (four renders each) and 15 more
+draw one or two, 191 renders on top of the shot's 390.
 
 #### Shots on one clock
 
@@ -1039,7 +1041,7 @@ every body of the clip at once and render the ones off-camera on every frame.
 | Realisation | Shots |
 |---|---|
 | Pass 1 only | `drill` [0.0, 7.0) · `fillet` [6.5, 9.0) · `verify` [8.5, 13.0) · `shapes` [12.5, 20.0) · `wordmark` [19.5, 24.0) |
-| With pass 2 (the first implementation) | `build` [0.0, 13.0) · `shapes` [12.5, 20.0) · `wordmark` [19.5, 24.0) |
+| With passes 2 and 3 (the current implementation) | `build` [0.0, 13.0) · `shapes` [12.5, 20.0) · `wordmark` [19.5, 24.0) |
 
 #### Storyboard
 
@@ -1079,13 +1081,16 @@ feature at a time. The plate is violet, the tools and the pin gold.
   is centred on the plate's mid-plane and spans z = −16 to 32 mm. It hangs off root → `Fixed` translation to its
   hole's centre, 160 mm above the landed pose → `Prismatic` −Z (tracks `tool.bore.plunge`, `tool.left.plunge`,
   `tool.right.plunge`). Its tip starts at z = 144 mm, above the camera's height of 110 mm, so the tools are out
-  of view until they plunge. Each plunge track goes from 0 to 160 mm (`EaseIn`) from 2.6 to 3.5 s, 2.75 to
-  3.65 s and 2.9 to 3.8 s, holds, and goes to −120 mm from 4.1 to 5.0 s (`EaseIn`): the tools leave the frame
+  of view until they plunge. The tools start 0.25 s apart, at 2.6, 2.85 and 3.1 s. Each plunge track has two
+  moves: an approach from 0 to 124 mm in 0.5 s (`EaseOut`), which stops the tip 4 mm above the top face, and a
+  drill from 124 to 160 mm in 0.45 s (`Linear`, 80 mm/s), so the bore's tool lands at 3.55 s, the left one at
+  3.8 s and the right one at 4.05 s. The track holds, and goes to −120 mm from 4.1 to 5.0 s (`EaseIn`): the tools
+  leave the frame
   and park with their bottoms at z = 264 mm, above the camera at its highest (about 230 mm, at the end of the A5
   tilt), so the tilted camera never sees them. Parked at 0, with their tips at z = 144 mm, the tools would hang
   between the tilted camera and the plate and fill the frame.
 
-  From 3.8 to 4.1 s every tool fills its hole. The tool's wall covers the hole's rim, and the 0.3 mm margin
+  From 4.05 to 4.1 s every tool fills its hole. An opaque tool's wall covers the hole's rim, and the 0.3 mm margin
   covers the difference between the two tessellations of that circle, so a blind and a through hole under a
   landed tool draw the same pixels up to solidlens's rasterizer: it shades each triangle flat, so a top face
   triangulated differently around a hole shifts its large triangles by 1 or 2 levels under the point light, and
@@ -1094,32 +1099,38 @@ feature at a time. The plate is violet, the tools and the pin gold.
   show a crescent of each tool's wall below the face; it shrinks to those pixels once the face carries a hole.
   - Pass 1: both plates are parts of the shot. The blank's node chain starts with root → `Prismatic` −Z (track
     `blank.stash`); the drilled plate hangs off root → `Prismatic` +Z (track `drilled.stash`) → `Fixed`
-    translation (0, 0, −2000). At 3.9 s a step move on each stash track to 2000 mm parks the blank 2 m below
+    translation (0, 0, −2000). At 4.06 s a step move on each stash track to 2000 mm parks the blank 2 m below
     the plate and brings the drilled plate up into place. A parked part lies about 58° off this camera's view
     axis, outside its 30° field of view.
-  - Pass 2: each hole has a track `hole.bore`, `hole.left`, `hole.right` whose one move copies its tool's plunge
-    (same start, end, easing and values) and has no retract move, so it holds 160 mm once the tool has landed. The
+  - Pass 2: each hole has a track `hole.bore`, `hole.left`, `hole.right` whose two moves copy its tool's plunge
+    (same starts, ends, easings and values) and has no retract move, so it holds 160 mm once the tool has landed. The
     `flange` `Builder` computes each hole's depth below the top face as `d = h − 128 mm`, the depth of the tool's
     tip: below 0.5 mm the hole is absent; from 0.5 to 15.5 mm it is a blind hole cut by a tool sketched on a
     plane offset to its end cap at depth `d`; above 15.5 mm it is a through hole cut by a tool sketched on XY and
     extruded 32 mm each way, which clears the top face by 16 mm and the bottom face by 32 mm. The Builder cuts the
     through holes first and a blind hole last (see "decad constraints"), and never asks for a tool ending in the
-    bottom face at 16 mm. Each hole is blind for about 30 ms, at the end of its tool's plunge, and the three
-    windows do not overlap, so no frame has two blind holes. An opaque tool hides the growing hole, so pass 2
-    looks the same as pass 1 here, without the stash parts.
-  - Pass 3: each tool's `Appearance.Fade` track holds 0 (hidden, no render cost) until its plunge starts, steps
-    to 0.4, and fades to 0 while the tool retracts, so the hole grows visibly through it. Each fading tool costs
-    one extra render per frame (pass 3), so the frames from 2.9 to 5.0 s, with three tools fading, cost four
-    renders each.
+    bottom face at 16 mm. Each hole is blind from 56 to 244 ms into its tool's drill move, about six frames, and
+    the three windows, 0.25 s apart, do not overlap, so no frame has two blind holes. An opaque tool hides the
+    growing hole, so pass 2 alone would look the same as pass 1 here, without the stash parts.
+  - Pass 3: each tool's `Appearance.Fade` track (`tool.<name>.fade`) holds 0 (hidden, no render cost) until its
+    plunge starts, steps to 0.4 while the tool is still out of view, and fades to 0 (`Linear`) while the tool
+    retracts, so the hole deepens visibly inside it. A plunge of one `EaseIn` move would pass the tip through the
+    plate at its top speed, about 530 mm/s, and the hole would open within one frame; the slow `Linear` drill
+    move spreads it over six frames. Each fading tool costs one extra render per frame (pass 3), so the frames
+    from 3.1 to 5.0 s, with three tools fading, cost four renders each.
 - A3 Fillet.
   - Pass 1: a 0.5 s dissolve from 6.5 to 7.0 s between the drilled plate and the filleted plate, under the
     continuing orbit.
   - Pass 2: parameter `fillet` holds 0, steps to 0.05 mm at 5.8 s and grows to 12 mm by 7.3 s (`EaseInOut`). The
     Builder treats a radius below 0.05 mm as no fillet. The 0.05 mm first step is a third of a pixel at this
     framing (0.16 mm per pixel).
-  - Pass 3: a point light (white, `Intensity` 0 → 2000 → 0) hangs off root → `Revolute` about Z through the
-    origin at node-local (80, 0, 30), and turns from −60° to 30° between 6.8 and 8.0 s, so a highlight slides
-    across the round nearest the camera. At 2000 the light adds about 1.25 to a face 40 mm away.
+  - Pass 3: a point light (white, `Intensity` 0 → 1500 → 0, up from 6.8 to 7.1 s with `EaseOut`, down from 7.7
+    to 8.0 s with `EaseIn`; track `lamp.fillet.intensity`) hangs off root → `Revolute` about Z through the origin
+    (track `lamp.fillet.turn`) at node-local (80, 0, 8), and turns from −60° to 30° between 6.8 and 8.0 s
+    (`Linear`): the light lights the left round, then the side face nearest the camera, then the right round. The
+    light sits at the plate's mid-height, below the top face's plane, so it does not light the top face: solidlens
+    shades each triangle flat (§11), and a light above the top face lights its few large triangles as visible
+    wedges. At 1500 the light adds about 1.5 to the +X side face, 32 mm away.
 - A4 Chamfer. The camera narrows its field of view (`cam.fov`) to bring the top rim closer.
   - Pass 1: a 0.5 s dissolve from 8.5 to 9.0 s between the filleted plate and the chamfered plate.
   - Pass 2: parameter `chamfer` holds 0, steps to 0.5 mm at 8.2 s and grows to 2 mm by 9.2 s (`Linear`). The
@@ -1188,8 +1199,9 @@ the plate, peg and dome; the letters are above the frame.
   any closer and the plate's sides leave the frame, because its front rim is nearer the camera than the target
   and the camera is 18 mm right of the plate's centre. The finished name stays on screen for the last 2.7 s, so
   a looping GIF rests on it before it restarts.
-- Pass 3: a white point light hangs off root → `Fixed` translation (−170, −60, 40) → `Prismatic` +X (0 to
-  340 mm from 22.0 to 23.5 s, `Linear`) with `Intensity` 0 → 5000 → 0 (up by 22.3 s, down from 23.2 s). It passes
+- Pass 3: a white point light hangs off root → `Fixed` translation (−170, −60, 40) → `Prismatic` +X (track
+  `lamp.word.slide`, 0 to 340 mm from 22.0 to 23.5 s, `Linear`) with `Intensity` 0 → 5000 → 0 (track
+  `lamp.word.intensity`, up from 22.0 to 22.3 s with `EaseOut`, down from 23.2 to 23.5 s with `EaseIn`). It passes
   about 46 mm in front of the letters' faces, where it adds about 2.4. solidlens reads a light colour as
   luminance only (pass 3), so the sweep brightens the letters and does not tint them.
 
@@ -1243,8 +1255,8 @@ The rules act A follows from these:
 - Through-hole tools are sketched on XY and cut first; a blind hole's tool, sketched on an offset plane, is cut
   last. No Cut follows a blind one, so the script never has two blind holes in one frame.
 
-Act A with pass 2 builds 148 distinct parameter tuples: one per frame of each ramp. `-probe` over all three shots
-builds them and tessellates every body in 8 s of CPU (1.5 s wall time on 24 threads).
+Act A with pass 2 builds 156 distinct parameter tuples: one per frame of each ramp. `-probe` over all three shots
+builds them and tessellates every body in 13 s of CPU (1.8 s wall time on 24 threads).
 
 #### The script
 
@@ -1332,22 +1344,23 @@ API and needs its own §5 entry first; a second clip program needing them is the
 | `script.go` | `landingScript()`: every track and move of the clip. The only file that holds motion timing |
 | `shots.go` | `Shot{Name, From, To, Build}`, the ordered shot table, the cut/dissolve/gap rule, the 0.5 s grid and even-fps checks, `-only` selection |
 | `shots_test.go` | a cut, a dissolve and a gap; a boundary off the 0.5 s grid; an odd fps; an `-only` name that names no shot; `-only` names given out of order render in table order |
-| `build.go` | act A: the `flange` `Builder` and the plate stages it composes (blank, cuts, fillet, chamfer), drill tools, pin, and their rigs |
-| `build_test.go` | the A2 hiding: the frame at 3.9 s rendered with the drilled plate and, for each hole in turn, with that hole 0.5 mm blind differ by more than 2 levels in at most 0.1 % of pixels; the parametric flange's measured height before and after A1 |
+| `build.go` | act A: the `flange` `Builder` and the plate stages it composes (blank, cuts, fillet, chamfer), drill tools and their fades, pin, the A3 light, and their rigs |
+| `build_test.go` | at 3.9 s, the median of how far each tool pixel lies from the hidden-tool frame toward the opaque-tool frame is 0.4 ± 0.01, and each hole made 0.5 mm blind changes at least 0.2 % of the pixels by more than 8 levels; each hole is blind for at least five frames and no frame has two; the A3 light lights at least 0.5 % of the pixels and their brightness-weighted mean x moves right by more than 40 px from 7.0 to 7.8 s, and lights none at 6.7 s; the parametric flange's measured height before and after A1 |
 | `shapes.go` | act B: the six bodies, after `_gallery/features.go`, and the shelf rig |
-| `wordmark.go` | act C: the masthead after `_gallery/hero.go` and `_gallery/sketching.go` (see below), and the letter rig |
+| `wordmark.go` | act C: the masthead after `_gallery/hero.go` and `_gallery/sketching.go` (see below), the letter rig and the sweeping light |
+| `wordmark_test.go` | the act C light lights no pixel at 21.9 s, and at 22.4, 22.8 and 23.2 s lights at least 0.5 % of the pixels with their brightness-weighted mean x moving right by more than 50 px each time |
 | `parts.go` | sketch helpers the acts share: `point`, `rectangle`, `circle`, `polylineProfile`, `validProfile`, `sketchLoops`, `prism`, `cylinder` |
-| `style.go` | the palette, the lights, and one `render.Style` per shot |
+| `style.go` | the palette, the fixed lights, the white look of the moving lights, and one `render.Style` per shot |
 | `assemble.go` | the ffmpeg command lines, built from the shot table, the frame rate and the output directory |
 | `assemble_test.go` | the filter graph for a table with a cut and two dissolves: input order, `settb`, `xfade` offsets, `concat` for the cut |
 
 `_gallery` is `package main` in decad's repository, so the clip cannot import its builders; `shapes.go` and
 `wordmark.go` rebuild them. The hero's builders return a `*decad.Mesh`; `wordmark.go`'s return the `*decad.Body`
 instead, so the rig can attach it and `render` tessellates it, and its doc comment names the decad commit the
-geometry was taken from. In `build_test.go` the 0.1 % slack and the 2-level threshold are for solidlens's flat
-shading and screen-space depth (A2 above); with the margin at 0.3 mm about 0.05 % of pixels differ, and a failure
-means the margin must grow. The comparison is not against the undrilled blank, whose depth error draws a crescent
-of each tool's wall below its top face. `_clips/demo/main.go` takes `-smoke` too (first frame at 160×90), for CI.
+geometry was taken from. `build_test.go` takes the median opacity rather than the mean because where two tools
+overlap on screen their fades compound. The light tests compare each frame with the same frame rendered with that
+light's intensity at 0, so the fixed lights and the camera's motion cancel. `_clips/demo/main.go` takes `-smoke`
+too (first frame at 160×90), for CI.
 
 #### Flags and output
 
@@ -1367,7 +1380,7 @@ of each tool's wall below its top face. `_clips/demo/main.go` takes `-smoke` too
   refuses, which `-smoke` (first frame only) cannot.
 
 Progress goes to stderr; stdout carries only the two ffmpeg commands, so `go run . > assemble.sh` writes a
-runnable script. For the first implementation's shot table the commands are:
+runnable script. For the clip's shot table the commands are:
 
 ```
 ffmpeg \
@@ -1399,7 +1412,7 @@ the demo clip's frames (4.5 s per input):
 - the MP4 command's pattern with three inputs and two 0.5 s dissolves: a 12.5 s, 375-frame MP4;
 - four inputs joined by a dissolve, a cut and a dissolve, written as above: a 17.0 s, 510-frame MP4;
 - the GIF command on a 4.5 s MP4: a 1.25 MB GIF;
-- the commands above on the first implementation's 750 frames: a 24.0 s, 720-frame MP4 of 2.3 MB and a 7.3 MB GIF.
+- the commands above on the clip's 750 frames: a 24.0 s, 720-frame MP4 of 2.5 MB and a 6.8 MB GIF.
 
 The PNG frames are the clip's deterministic output (§7); the MP4 and GIF bytes depend on the ffmpeg build and are
 not promised. `.gitignore` ignores `_clips/*/out/`. Neither video is committed to this repository. The GIF is what decad's README can show inline; GitHub does not

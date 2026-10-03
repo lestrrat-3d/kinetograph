@@ -36,6 +36,20 @@ const (
 	letterOffsetZ = 200.0
 )
 
+// The word lamp is a white point light that starts at wordLampStart, left of
+// the plate and 46 mm in front of the letters' front faces (y = -14 mm), and
+// slides wordLampTravel millimetres along +X. At wordLampIntensity it adds
+// about 2.4 to a letter face it passes.
+var wordLampStart = r3.NewVec(-170, -60, 40)
+
+const (
+	wordLampTravel    = 340.0
+	wordLampIntensity = 5000.0
+)
+
+// wordLamp is the name of act C's moving light.
+const wordLamp = "lamp.word"
+
 // The wordmark camera is _gallery/hero.go's, in the dolly joint's frame.
 var (
 	wordCameraPosition = r3.NewVec(18, -360, 68)
@@ -109,10 +123,44 @@ func wordmarkTake(ctx context.Context, ch *Channels) (*Take, error) {
 	}
 	parts["dome"] = matte(sky)
 
+	lamp, err := addWordLamp(scene, rig.Root(), ch)
+	if err != nil {
+		return nil, fmt.Errorf("word lamp: %w", err)
+	}
 	if err := setWordCamera(scene, rig.Root(), ch); err != nil {
 		return nil, fmt.Errorf("camera: %w", err)
 	}
-	return &Take{Scene: scene, Style: wordmarkStyle(parts)}, nil
+	return &Take{Scene: scene, Style: wordmarkStyle(parts, map[string]render.LightAppearance{wordLamp: lamp})}, nil
+}
+
+// addWordLamp hangs the word lamp off root -> Fixed translation to
+// wordLampStart -> Prismatic +X (lamp.word.slide) and returns its look:
+// white, at the intensity of track lamp.word.intensity.
+func addWordLamp(scene *kinetograph.Scene, root *kinetograph.Node, ch *Channels) (render.LightAppearance, error) {
+	slide, err := ch.Get("lamp.word.slide")
+	if err != nil {
+		return render.LightAppearance{}, err
+	}
+	intensity, err := ch.Get("lamp.word.intensity")
+	if err != nil {
+		return render.LightAppearance{}, err
+	}
+	start, err := r3.Translation(wordLampStart)
+	if err != nil {
+		return render.LightAppearance{}, err
+	}
+	at, err := root.Fixed(start)
+	if err != nil {
+		return render.LightAppearance{}, err
+	}
+	node, err := at.Prismatic(r3.NewVec(1, 0, 0), slide)
+	if err != nil {
+		return render.LightAppearance{}, err
+	}
+	if err := scene.AddLight(wordLamp, node, kinetograph.Light{Kind: kinetograph.PointLight}); err != nil {
+		return render.LightAppearance{}, err
+	}
+	return whiteLamp(intensity), nil
 }
 
 // letterNode is root -> Fixed translation (0, -80, 200) -> Prismatic along
