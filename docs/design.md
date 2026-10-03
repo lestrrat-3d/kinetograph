@@ -712,13 +712,18 @@ Tests use `testify/require` in an external `_test` package with `t.Context()`, a
 | reshape | `AddParametric` with a nil builder, a foreign node, a nil channel, a length-times-angle keyframe value, a duplicate name | `ErrNilBuilder`, `ErrForeignNode`, `ErrNilChannel`, `units.ErrUnnamedKind`, `ErrDuplicateName`; no `Build` call |
 | reshape | a parametric block on a prismatic node, width 10 to 30 mm over 1 s, `Scene.At` at 500 ms twice | `Pose.Params` holds 20 mm and 10 mm exactly; the body's measured bounds are ±10 × ±5 × 0–10 mm; `Pose.Transform` equals the node's `World(t)`; each `At` call builds once |
 | reshape | `AtCached` through one cache from 16 goroutines at four times sharing one tuple, then at two times with a new width and a new depth | `Build` called once and every `Pose.Body` the same pointer; each new tuple adds exactly one call; `FrameCached` reuses the cached body |
+| reshape | width and depth swap values between two times (10 × 20 mm, then 20 × 10 mm), one cache | `Build` called twice; the two bodies' measured bounds are ±5 × ±10 and ±10 × ±5 mm |
 | reshape | `Build` returns an error; `Build` returns a nil body | `errors.Is` reaches the builder's error; `ErrNilBody`; the message names the part; a later time with the same tuple fails without another `Build` |
 | reshape | a `Builder` that cancels ctx and fails | `ctx.Err()` returned unwrapped; the next `AtCached` with a live ctx builds again |
 | reshape | `Scene.Parts` on a scene with both kinds of part | names and order as added; `Body` set for the `AddPart` part, nil and `Parametric` for the other; no `Build` call |
-| memo | `Map.Get` from 8 goroutines on one key; a failing call; a call failing under a cancelled ctx; a waiter with a cancelled ctx; a panicking call | one call and one shared result; the failure kept; the cancelled failure dropped and rebuilt; `ctx.Err()`; the entry dropped |
+| memo | `Map.Get` from 8 goroutines on one key, released only once 7 are parked on the entry | one call; every caller gets the same result |
+| memo | a caller parked on a call that then fails under its own cancelled ctx | the parked caller calls its own function once and gets its result |
+| memo | a failing call; a call failing under a cancelled ctx; a waiter with a cancelled ctx; a panicking call | the failure kept; the cancelled failure dropped and rebuilt; `ctx.Err()`; the entry dropped |
 | render | a parametric block whose width steps from 10 to 20 mm at frame 3 of 6 | from frame 0 to frame 5 the blob's pixel width grows by at least 4 px and stays centred within 1 px; frame 5's PNG bytes equal the same 20 mm block attached with `AddPart` |
 | render | `Sequence` of a parametric clip with 2 distinct tuples over 6 frames, with 1 and with 3 workers | `Build` called exactly 2 times in each run; `render.New` called it 0 times; the 6 files are byte-identical between the two runs |
 | render | a `Builder` that fails for the tuple first reached at frame 3, with 1 and with 3 workers | `*FrameError` with `Index == 3`, `Time == FrameTime(3)`, `errors.Is` reaches the builder's error; exactly files 0–2 present, no `.tmp` file |
+| render | 3 workers; a `Builder` refusing frame 4's tuple at once and frame 3's only after that refusal | refusals in that order; `*FrameError` with `Index == 3`; exactly files 0–2 present |
+| render | a parametric part with a zero chord | `render.New` succeeds; `Frame(2)` returns a `*FrameError` with `Index == 2` naming the part's tessellation; one `Build` call |
 | render | a `Builder` that fails at every frame | `render.New` succeeds; `Frame(0)` returns a `*FrameError` with `Index == 0` |
 | render | `Style.Parts` naming a parametric part | accepted; that part draws in its own colour |
 | examples | `Example_kinetograph_sequence` | the `// Output:` block, verified by `go test ./examples/` |

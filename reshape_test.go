@@ -216,6 +216,32 @@ func TestAtCachedBuildsOncePerTuple(t *testing.T) {
 	require.Equal(t, 3, b.callCount())
 }
 
+func TestAtCachedKeysEveryParameterByName(t *testing.T) {
+	rig := kinetograph.NewRig()
+	// At 0 s the tuple is (width 10, depth 20); at 1 s the same two values
+	// swap names: (width 20, depth 10). One key per name order tells them apart.
+	width := mustChannel(t,
+		kinetograph.Keyframe{At: 0, Value: units.Millimeters(10)},
+		kinetograph.Keyframe{At: time.Second, Value: units.Millimeters(20)},
+	)
+	depth := mustChannel(t,
+		kinetograph.Keyframe{At: 0, Value: units.Millimeters(20)},
+		kinetograph.Keyframe{At: time.Second, Value: units.Millimeters(10)},
+	)
+	b := &blockBuilder{}
+	scene := parametricScene(t, rig, rig.Root(), b, map[string]*kinetograph.Channel{"width": width, "depth": depth})
+	cache := kinetograph.NewBuildCache()
+
+	first, err := scene.AtCached(t.Context(), 0, cache)
+	require.NoError(t, err)
+	swapped, err := scene.AtCached(t.Context(), time.Second, cache)
+	require.NoError(t, err)
+	require.Equal(t, 2, b.callCount())
+	require.NotSame(t, first.Poses[0].Body, swapped.Poses[0].Body)
+	decadtest.MeasuresBounds(t, first.Poses[0].Body, r3.Vec{X: -5, Y: -10}, r3.Vec{X: 5, Y: 10, Z: 10})
+	decadtest.MeasuresBounds(t, swapped.Poses[0].Body, r3.Vec{X: -10, Y: -5}, r3.Vec{X: 10, Y: 5, Z: 10})
+}
+
 func TestSceneAtBuildFailures(t *testing.T) {
 	errBuild := errors.New("cannot build")
 	for _, tc := range []struct {

@@ -6,11 +6,26 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/lestrrat-3d/kinetograph/internal/memo"
 )
+
+// waitParked blocks until n callers have parked on k's entry.
+func waitParked[K comparable, V any](t *testing.T, m *memo.Map[K, V], k K, n int) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		got, ok := m.Parked(k)
+		return ok && got == n
+	}, 10*time.Second, time.Millisecond, "waiting for %d parked callers", n)
+}
+
+type result[V any] struct {
+	value V
+	err   error
+}
 
 func TestGetCallsOncePerKey(t *testing.T) {
 	var m memo.Map[string, *int]
@@ -25,26 +40,27 @@ func TestGetCallsOncePerKey(t *testing.T) {
 	}
 
 	const n = 8
-	got := make([]*int, n)
-	var started, wg sync.WaitGroup
-	started.Add(n)
+	results := make([]result[*int], n)
+	var wg sync.WaitGroup
 	for i := range n {
 		wg.Go(func() {
-			started.Done()
 			v, err := m.Get(t.Context(), "a", f)
-			require.NoError(t, err)
-			got[i] = v
+			results[i] = result[*int]{v, err}
 		})
 	}
-	started.Wait()
+	// One caller is inside f and the other n-1 wait on its entry before f
+	// may return, so every caller below took the shared result.
+	waitParked(t, &m, "a", n-1)
+	require.Equal(t, int32(1), calls.Load())
 	close(release)
 	wg.Wait()
 
 	require.Equal(t, int32(1), calls.Load())
 	for i := range n {
-		require.Same(t, got[0], got[i])
+		require.NoError(t, results[i].err)
+		require.Same(t, results[0].value, results[i].value)
 	}
-	require.Equal(t, 42, *got[0])
+	require.Equal(t, 42, *results[0].value)
 
 	// Another key is another call.
 	_, err := m.Get(t.Context(), "b", f)
@@ -88,29 +104,37 @@ func TestGetWaiterRetriesAfterCancelledCall(t *testing.T) {
 	entered := make(chan struct{})
 	fail := make(chan struct{})
 
+	var firstResult, secondResult result[string]
+	var secondCalls atomic.Int32
 	var wg sync.WaitGroup
 	wg.Go(func() {
-		_, err := m.Get(first, 1, func(ctx context.Context) (string, error) {
+		v, err := m.Get(first, 1, func(ctx context.Context) (string, error) {
 			close(entered)
 			<-fail
 			cancelFirst()
 			return "", ctx.Err()
 		})
-		require.ErrorIs(t, err, context.Canceled)
+		firstResult = result[string]{v, err}
 	})
 	<-entered
 
-	// This caller finds the first call running and waits for it; the first
-	// call fails under a cancelled context, so this caller builds itself.
-	result := make(chan string, 1)
 	wg.Go(func() {
-		v, err := m.Get(t.Context(), 1, func(context.Context) (string, error) { return "second", nil })
-		require.NoError(t, err)
-		result <- v
+		v, err := m.Get(t.Context(), 1, func(context.Context) (string, error) {
+			secondCalls.Add(1)
+			return "second", nil
+		})
+		secondResult = result[string]{v, err}
 	})
+	// The second caller waits on the first call's entry; only then does the
+	// first call fail under its cancelled context.
+	waitParked(t, &m, 1, 1)
 	close(fail)
 	wg.Wait()
-	require.Equal(t, "second", <-result)
+
+	require.ErrorIs(t, firstResult.err, context.Canceled)
+	require.NoError(t, secondResult.err)
+	require.Equal(t, "second", secondResult.value)
+	require.Equal(t, int32(1), secondCalls.Load(), "the waiter called its own function after the drop")
 }
 
 func TestGetWaiterCancelled(t *testing.T) {

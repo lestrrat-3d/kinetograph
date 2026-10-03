@@ -10,12 +10,14 @@ import (
 
 // entry is one key's result. done is closed once value and err are set;
 // dropped is set before done closes when the call failed under a done ctx or
-// panicked, and tells a waiter to call f itself.
+// panicked, and tells a waiter to call f itself. parked counts the callers
+// that found the entry and waited on done; it is guarded by Map.mu.
 type entry[V any] struct {
 	done    chan struct{}
 	value   V
 	err     error
 	dropped bool
+	parked  int
 }
 
 // Map holds one result per key. The zero Map is empty and ready to use. It is
@@ -46,6 +48,7 @@ func (m *Map[K, V]) Get(ctx context.Context, k K, f func(context.Context) (V, er
 			m.mu.Unlock()
 			return m.fill(ctx, k, e, f)
 		}
+		e.parked++
 		m.mu.Unlock()
 
 		select {

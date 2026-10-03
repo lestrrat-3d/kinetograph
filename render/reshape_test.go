@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -211,4 +212,89 @@ func TestStyleNamesParametricPart(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, count(img, blue), 40)
 	require.Equal(t, 0, count(img, red), "the default appearance is not used")
+}
+
+var (
+	errFast = errors.New("30 mm refused at once")
+	errSlow = errors.New("20 mm refused late")
+)
+
+// orderedFailBuilder refuses 30 mm at once and 20 mm only after the 30 mm
+// refusal, so a later frame fails before an earlier one. It records the order
+// of its refusals.
+type orderedFailBuilder struct {
+	fastFailed chan struct{}
+	mu         sync.Mutex
+	refusals   []error
+}
+
+func (b *orderedFailBuilder) refuse(err error) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.refusals = append(b.refusals, err)
+	return err
+}
+
+func (b *orderedFailBuilder) Build(ctx context.Context, p kinetograph.Params) (*decad.Body, error) {
+	w, err := p["width"].In(units.Millimeter)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case w > 25:
+		err := b.refuse(errFast)
+		close(b.fastFailed) // the BuildCache calls Build once for 30 mm
+		return nil, err
+	case w > 15:
+		select {
+		case <-b.fastFailed:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(10 * time.Second):
+			return nil, errors.New("the 30 mm frame never failed: is a second worker running?")
+		}
+		return nil, b.refuse(errSlow)
+	}
+	return centeredBlock(ctx, w)
+}
+
+func TestSequenceReportsLowestOfTwoBuildFailures(t *testing.T) {
+	// Frames 0 to 2 are 10 mm, frame 3 is 20 mm, frames 4 and 5 are 30 mm.
+	width := channel(t,
+		kinetograph.Keyframe{At: 0, Value: units.Millimeters(10)},
+		kinetograph.Keyframe{At: 2 * time.Second / 6, Value: units.Millimeters(10)},
+		kinetograph.Keyframe{At: 3 * time.Second / 6, Value: units.Millimeters(20)},
+		kinetograph.Keyframe{At: 4 * time.Second / 6, Value: units.Millimeters(30)},
+	)
+	b := &orderedFailBuilder{fastFailed: make(chan struct{})}
+	clip := parametricClip(t, b, width)
+	r := newRenderer(t, clip, baseStyle())
+	dir := t.TempDir()
+	seq, err := r.Sequence(t.Context(), dir, render.WithWorkers(3))
+	require.Nil(t, seq)
+
+	require.Equal(t, []error{errFast, errSlow}, b.refusals, "frame 4 failed before frame 3")
+	var fe *render.FrameError
+	require.ErrorAs(t, err, &fe)
+	require.Equal(t, 3, fe.Index)
+	require.Equal(t, clip.FrameTime(3), fe.Time)
+	require.ErrorIs(t, err, errSlow)
+	require.Equal(t, []string{"frame_000000.png", "frame_000001.png", "frame_000002.png"}, listDir(t, dir))
+}
+
+func TestFrameReportsRebuiltTessellationFailure(t *testing.T) {
+	// A zero chord is decad's refusal. With no part attached by AddPart, New
+	// tessellates nothing, so the refusal surfaces at the frame.
+	style := baseStyle()
+	style.Chord = units.Millimeters(0)
+	b := &widthBuilder{}
+	r := newRenderer(t, parametricClip(t, b, steppedWidth(t)), style)
+
+	_, err := r.Frame(t.Context(), 2)
+	var fe *render.FrameError
+	require.ErrorAs(t, err, &fe)
+	require.Equal(t, 2, fe.Index)
+	require.Equal(t, 2*time.Second/6, fe.Time)
+	require.ErrorContains(t, err, `tessellating part "block"`)
+	require.Equal(t, int32(1), b.calls.Load(), "the body was built; its tessellation failed")
 }
