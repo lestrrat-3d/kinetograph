@@ -23,6 +23,16 @@ const (
 	imgH = 48
 )
 
+// Part and light names the tests attach.
+const (
+	partBlock = "block"
+	partLeft  = "left"
+	partRight = "right"
+	partFront = "front"
+	partBack  = "back"
+	lightSun  = "sun"
+)
+
 var (
 	white = solidlens.RGB(1, 1, 1)
 	red   = solidlens.RGB(1, 0, 0)
@@ -102,8 +112,8 @@ func newScene(tb testing.TB, rig *kinetograph.Rig, parts map[string]*kinetograph
 func oneBlockScene(tb testing.TB, rig *kinetograph.Rig, node *kinetograph.Node, body *decad.Body) *kinetograph.Scene {
 	tb.Helper()
 	return newScene(tb, rig,
-		map[string]*kinetograph.Node{"block": node}, []string{"block"},
-		map[string]*decad.Body{"block": body}, rig.Root(), sideCamera())
+		map[string]*kinetograph.Node{partBlock: node}, []string{partBlock},
+		map[string]*decad.Body{partBlock: body}, rig.Root(), sideCamera())
 }
 
 func newClip(tb testing.TB, scene *kinetograph.Scene, fps int, d time.Duration) *kinetograph.Clip {

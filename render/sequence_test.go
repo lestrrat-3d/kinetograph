@@ -49,7 +49,7 @@ func failingRenderer(t *testing.T) *render.Renderer {
 	t.Helper()
 	rig := kinetograph.NewRig()
 	scene := kinetograph.NewScene(rig)
-	require.NoError(t, scene.AddPart("block", rig.Root(), block(t, -5)))
+	require.NoError(t, scene.AddPart(partBlock, rig.Root(), block(t, -5)))
 	cam := sideCamera()
 	frame3 := time.Duration(3) * time.Second / 24
 	frame4 := time.Duration(4) * time.Second / 24

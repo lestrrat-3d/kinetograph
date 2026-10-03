@@ -15,12 +15,16 @@ kinetograph writes no video.
   transform is its own composed with its parent's. Bodies AND the camera attach to nodes.
 - Reshape: a `Builder` makes a part's body from channel values (`Params`); a `BuildCache`
   calls it once per distinct tuple.
+- Appearance: lights attach to nodes (`Scene.AddLight`); their color and intensity channel,
+  and each part's fade channel, are `render.Style`'s. A fading part is drawn by rendering
+  the frame in layers and mixing them far to near (`render/fade.go`).
 - Output: `render` builds one solidlens scene per frame and writes one PNG per frame.
 
-**Current state: pass 1 (the initial pass) and pass 2 (reshape) are implemented.**
-`docs/design.md` is the contract. §5.1–§5.6 there are the initial pass's public API, §5.7–§5.8
-reshape's, §9 names what each later pass adds (animated appearance and the landing-page clip
-are not built), §12 points at where each settled choice lives.
+**Current state: pass 1 (the initial pass), pass 2 (reshape) and pass 3 (animated
+appearance) are implemented.** `docs/design.md` is the contract. §5.1–§5.6 there are the
+initial pass's public API, §5.7–§5.8 reshape's, §9 "Pass 3" animated appearance's. §9 also
+names pass 4 (the landing-page clip, not built), and §12 points at where each settled choice
+lives.
 
 ## Read before you write
 
@@ -32,6 +36,7 @@ are not built), §12 points at where each settled choice lives.
 | Rig, joint or camera code | `docs/design.md` §4 D1, D2, D5, §5.2, §5.3 |
 | Anything under `render/` | `docs/design.md` §5.5, §6, §7; decad's `_gallery/` (the reference use of solidlens) |
 | Reshape code (`reshape.go`, `internal/memo/`, render's per-call caches) | `docs/design.md` §5.7, §7 |
+| Light or fade code (`light.go`, `render/fade.go`, `render/style.go`) | `docs/design.md` §4 D6, §9 pass 3, §11 |
 | Tests | `docs/design.md` §10 |
 | Anything the surrounding `.go` file already documents | that file's own doc comments |
 

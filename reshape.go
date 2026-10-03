@@ -70,7 +70,7 @@ func (s *Scene) AddParametric(name string, node *Node, b Builder, params map[str
 		channels[i] = c
 	}
 	if _, dup := s.names[name]; dup {
-		return fmt.Errorf("%w: %q", ErrDuplicateName, name)
+		return fmt.Errorf("%w: part %q", ErrDuplicateName, name)
 	}
 	s.names[name] = struct{}{}
 	s.parts = append(s.parts, part{

@@ -106,10 +106,10 @@ func TestPartAppearanceOverridesDefault(t *testing.T) {
 	right, err := rig.Root().Fixed(translation(t, r3.Vec{X: 20}))
 	require.NoError(t, err)
 	scene := newScene(t, rig,
-		map[string]*kinetograph.Node{"left": left, "right": right}, []string{"left", "right"},
-		map[string]*decad.Body{"left": block(t, -5), "right": block(t, -5)}, rig.Root(), sideCamera())
+		map[string]*kinetograph.Node{partLeft: left, partRight: right}, []string{partLeft, partRight},
+		map[string]*decad.Body{partLeft: block(t, -5), partRight: block(t, -5)}, rig.Root(), sideCamera())
 	style := baseStyle()
-	style.Parts = map[string]render.Appearance{"right": {Material: flat(blue)}}
+	style.Parts = map[string]render.Appearance{partRight: {Material: flat(blue)}}
 	r := newRenderer(t, newClip(t, scene, 24, time.Second), style)
 
 	img, err := r.Frame(t.Context(), 0)

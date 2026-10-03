@@ -65,8 +65,9 @@ Evaluation of one frame runs top to bottom:
    part's parameter channels at `t` and takes the body from the part's `Builder`, through a `BuildCache` that
    calls `Build` once per distinct parameter tuple.
 5. `render.Renderer` maps each `Pose` to a solidlens `Model` whose vertices are the part's tessellated vertices
-   under `Transform.Apply`, builds the solidlens `Camera`, adds the style's lights and background, and calls
-   `solidlens.RenderPNG`. A rebuilt body is tessellated once per distinct body in the call that rendered it.
+   under `Transform.Apply`, builds the solidlens `Camera`, adds the style's lights, the node lights and the
+   background, calls `solidlens.Render` (once per layer when a part is fading, §9 pass 3) and encodes the image
+   with `png.Encode`. A rebuilt body is tessellated once per distinct body in the call that rendered it.
 
 ## 4. Decisions
 
@@ -431,7 +432,7 @@ Pass 3 (§9) adds `Appearance.Fade`, `LightAppearance` and `Style.Lights`, and t
 `TriangleSource` holding the part's triangle indices and its vertices under `Pose.Transform.Apply`. The camera is
 `solidlens.Camera{Position, Target, Up, FOV: fov.In(units.Degree)}`.
 
-Each frame file is written to a temporary name in `dir` and renamed into place once `RenderPNG` returns, so a
+Each frame file is written to a temporary name in `dir` and renamed into place once `png.Encode` returns, so a
 cancelled or failed run leaves no partial frame file.
 
 A `Style.Parts` name may name a parametric part; its `Appearance` then draws every body that part's `Builder`

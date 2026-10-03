@@ -3,6 +3,7 @@ package kinetograph
 import (
 	"fmt"
 	"math"
+	"slices"
 	"time"
 
 	"github.com/lestrrat-3d/units"
@@ -114,6 +115,13 @@ func Constant(v units.Value) *Channel {
 
 // Kind returns the kind every value of the channel carries.
 func (c *Channel) Kind() units.Kind { return c.kind }
+
+// Keyframes returns a copy of the channel's keyframes in time order. A
+// keyframe given a nil Ease carries Linear. Constant(v) has one keyframe, at
+// time 0.
+func (c *Channel) Keyframes() []Keyframe {
+	return slices.Clone(c.keys)
+}
 
 // At returns the channel's value at t: the first keyframe's value before it,
 // the last keyframe's after it, and between two keyframes

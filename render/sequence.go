@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +14,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lestrrat-3d/solidlens"
 	"github.com/lestrrat-go/option/v3"
 
 	"github.com/lestrrat-3d/kinetograph"
@@ -93,7 +94,12 @@ func foldSequenceOptions(opts []SequenceOption) sequenceConfig {
 // prefix + the six-digit frame index + ".png", and returns what a video tool
 // needs to assemble them. It creates dir if needed. Each file is written to a
 // temporary name in dir and renamed into place once the frame is complete, so
-// a failed or cancelled run leaves no partial frame file.
+// a failed or cancelled run leaves no partial frame file. Each frame is the
+// image Frame returns, fades and node lights included, encoded with
+// png.Encode; a frame with no fading part therefore holds the bytes
+// solidlens.RenderPNG writes for its one scene. A worker drawing a frame with
+// fading parts holds one float64 accumulator per image byte, 32 bytes per
+// pixel (about 66 MB at 1920x1080), plus two 4-byte-per-pixel layer images.
 //
 // The workers share one kinetograph.BuildCache and one mesh cache for this
 // call, so each parametric part is built once per distinct parameter tuple
@@ -169,7 +175,7 @@ func (r *Renderer) Sequence(ctx context.Context, dir string, opts ...SequenceOpt
 // writeFrame renders frame i to its file. It returns a *FrameError for any
 // failure that is not a cancelled ctx, and ctx.Err() for that one.
 func (r *Renderer) writeFrame(ctx context.Context, rn *run, dir, prefix string, i int) error {
-	scene, err := r.scene(ctx, rn, i)
+	img, err := r.frameImage(ctx, rn, i)
 	if err != nil {
 		return r.frameError(ctx, i, err)
 	}
@@ -178,7 +184,7 @@ func (r *Renderer) writeFrame(ctx context.Context, rn *run, dir, prefix string, 
 		return r.frameError(ctx, i, err)
 	}
 	tmpName := tmp.Name()
-	if err := encodeTo(ctx, tmp, scene, r.settings()); err != nil {
+	if err := encodeTo(tmp, img); err != nil {
 		_ = os.Remove(tmpName)
 		return r.frameError(ctx, i, err)
 	}
@@ -190,12 +196,13 @@ func (r *Renderer) writeFrame(ctx context.Context, rn *run, dir, prefix string, 
 	return nil
 }
 
-// encodeTo renders scene as PNG into f and closes f.
-func encodeTo(ctx context.Context, f *os.File, scene solidlens.Scene, settings solidlens.Settings) error {
+// encodeTo writes img as PNG into f with png.Encode, the encoder
+// solidlens.RenderPNG uses, and closes f.
+func encodeTo(f *os.File, img image.Image) error {
 	w := bufio.NewWriter(f)
-	if err := solidlens.RenderPNG(ctx, w, scene, settings); err != nil {
+	if err := png.Encode(w, img); err != nil {
 		_ = f.Close()
-		return err
+		return fmt.Errorf("render: write PNG: %w", err)
 	}
 	if err := w.Flush(); err != nil {
 		_ = f.Close()
