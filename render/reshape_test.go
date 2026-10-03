@@ -84,7 +84,7 @@ func parametricClip(t *testing.T, b kinetograph.Builder, width *kinetograph.Chan
 	t.Helper()
 	rig := kinetograph.NewRig()
 	scene := kinetograph.NewScene(rig)
-	require.NoError(t, scene.AddParametric("block", rig.Root(), b, map[string]*kinetograph.Channel{"width": width}))
+	require.NoError(t, scene.AddParametric(partBlock, rig.Root(), b, map[string]*kinetograph.Channel{"width": width}))
 	require.NoError(t, scene.SetCamera(rig.Root(), sideCamera()))
 	return newClip(t, scene, 6, time.Second)
 }
@@ -206,7 +206,7 @@ func TestFrameReportsBuildFailureAtFrameZero(t *testing.T) {
 
 func TestStyleNamesParametricPart(t *testing.T) {
 	style := baseStyle()
-	style.Parts = map[string]render.Appearance{"block": {Material: flat(blue)}}
+	style.Parts = map[string]render.Appearance{partBlock: {Material: flat(blue)}}
 	r := newRenderer(t, parametricClip(t, &widthBuilder{}, steppedWidth(t)), style)
 	img, err := r.Frame(t.Context(), 4)
 	require.NoError(t, err)
