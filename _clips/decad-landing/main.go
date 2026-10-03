@@ -1,15 +1,17 @@
 // Command decad-landing renders the landing-page clip for decad's README: a
 // 24 s clip in three acts on one global clock.
 //
-//   - build (0 to 13 s): a flange plate grows from a 2 mm slab, three drill
-//     tools plunge into it while its holes follow their tips, its vertical
-//     edges round over and its top cap loop takes a chamfer, then a pin drops
-//     into the bore and the camera tilts up to show the clearance around it.
+//   - build (0 to 13 s): a flange plate grows from a 2 mm slab, three
+//     see-through drill tools plunge into it while its holes deepen inside
+//     them, its vertical edges round over and a moving light passes the
+//     round, its top cap loop takes a chamfer, then a pin drops into the bore
+//     and the camera tilts up to show the clearance around it.
 //   - shapes (12.5 to 20 s): a camera dollies past a shelf of six parts, each
 //     turning once: a revolved ring, a swept duct, a lofted duct, a free-form
 //     blade, a shelled tray and a surface-result dish.
 //   - wordmark (19.5 to 24 s): the five letters of DECAD drop onto a shelled
-//     backing plate between a peg and a dome.
+//     backing plate between a peg and a dome, and a light slides across the
+//     name from left to right.
 //
 // Each act is a shot with its own scene, rendered as its own numbered PNG
 // sequence; shots that overlap on the clock dissolve into each other in the

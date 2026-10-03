@@ -37,6 +37,25 @@ const (
 	toolTravel       = 160.0
 )
 
+// toolFade is a drill tool's opacity while it plunges and holds in its hole:
+// the gold tool still reads as a tool, and the hole shows growing inside it.
+const toolFade = 0.4
+
+// The fillet lamp is a white point light at filletLampPosition on a revolute
+// joint about Z through the origin, which turns it from filletLampFrom to
+// filletLampTo degrees past the round nearest the camera. It sits at the
+// plate's mid-height, below the top face's plane, so it lights the side faces
+// and the rounds and leaves the top face, whose few large triangles solidlens
+// shades flat, unlit. At filletLampIntensity it adds about 1.5 to the +X side
+// face, 32 mm away.
+var filletLampPosition = r3.NewVec(80, 0, 8)
+
+const (
+	filletLampFrom      = -60.0
+	filletLampTo        = 30.0
+	filletLampIntensity = 1500.0
+)
+
 // A feature whose parameter is below decad's smallest accepted value is left
 // out (docs/design.md §9, pass 4, "decad constraints").
 const (
@@ -252,17 +271,53 @@ func assembleBuild(ctx context.Context, ch *Channels, plate *decad.Body) (*Take,
 		if err := addTool(ctx, scene, rig.Root(), ch, d); err != nil {
 			return nil, fmt.Errorf("%s: %w", name, err)
 		}
-		parts[name] = matte(gold)
+		fade, err := ch.Get(name + ".fade")
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		look := matte(gold)
+		look.Fade = fade
+		parts[name] = look
 	}
 	if err := addPin(ctx, scene, rig.Root(), ch); err != nil {
 		return nil, fmt.Errorf("pin: %w", err)
 	}
 	parts["pin"] = matte(gold)
 
+	lamp, err := addFilletLamp(scene, rig.Root(), ch)
+	if err != nil {
+		return nil, fmt.Errorf("fillet lamp: %w", err)
+	}
 	if err := setBuildCamera(scene, rig.Root(), ch); err != nil {
 		return nil, fmt.Errorf("camera: %w", err)
 	}
-	return &Take{Scene: scene, Style: buildStyle(parts)}, nil
+	return &Take{Scene: scene, Style: buildStyle(parts, map[string]render.LightAppearance{filletLamp: lamp})}, nil
+}
+
+// filletLamp is the name of act A's moving light.
+const filletLamp = "lamp.fillet"
+
+// addFilletLamp hangs the fillet lamp off root -> Revolute about Z through the
+// origin (lamp.fillet.turn) and returns its look: white, at the intensity of
+// track lamp.fillet.intensity.
+func addFilletLamp(scene *kinetograph.Scene, root *kinetograph.Node, ch *Channels) (render.LightAppearance, error) {
+	turn, err := ch.Get("lamp.fillet.turn")
+	if err != nil {
+		return render.LightAppearance{}, err
+	}
+	intensity, err := ch.Get("lamp.fillet.intensity")
+	if err != nil {
+		return render.LightAppearance{}, err
+	}
+	node, err := root.Revolute(r3.Vec{}, r3.NewVec(0, 0, 1), turn)
+	if err != nil {
+		return render.LightAppearance{}, err
+	}
+	light := kinetograph.Light{Kind: kinetograph.PointLight, Position: filletLampPosition}
+	if err := scene.AddLight(filletLamp, node, light); err != nil {
+		return render.LightAppearance{}, err
+	}
+	return whiteLamp(intensity), nil
 }
 
 // addFlange attaches the flange to root: plate when it is non-nil, the

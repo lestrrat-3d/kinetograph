@@ -4,6 +4,7 @@ import (
 	"github.com/lestrrat-3d/solidlens"
 	"github.com/lestrrat-3d/units"
 
+	"github.com/lestrrat-3d/kinetograph"
 	"github.com/lestrrat-3d/kinetograph/render"
 )
 
@@ -56,9 +57,16 @@ func matte(color solidlens.Color) render.Appearance {
 	return render.Appearance{Material: solidlens.Matte(color), Edges: solidlens.Outline(edgeColor)}
 }
 
+// whiteLamp is a moving light's look: white, at intensity over time.
+// solidlens reads a light colour as its luminance only, so a coloured lamp
+// would light the parts exactly as a dimmer white one does.
+func whiteLamp(intensity *kinetograph.Channel) render.LightAppearance {
+	return render.LightAppearance{Color: solidlens.RGB(1, 1, 1), Intensity: intensity}
+}
+
 // buildStyle is act A's look: the gallery's background, lights and chord,
-// the plate violet and the tools and pin gold.
-func buildStyle(parts map[string]render.Appearance) render.Style {
+// the plate violet and the tools and pin gold. lamps are its moving lights.
+func buildStyle(parts map[string]render.Appearance, lamps map[string]render.LightAppearance) render.Style {
 	return render.Style{
 		Chord:             units.Millimeters(partChord),
 		Background:        backgroundColor,
@@ -66,6 +74,7 @@ func buildStyle(parts map[string]render.Appearance) render.Style {
 		Parts:             parts,
 		DirectionalLights: galleryDirectionalLights(),
 		PointLights:       galleryPointLights(),
+		Lights:            lamps,
 	}
 }
 
@@ -82,8 +91,9 @@ func shapesStyle(parts map[string]render.Appearance) render.Style {
 	}
 }
 
-// wordmarkStyle is act C's look: _gallery/hero.go's lights and chord.
-func wordmarkStyle(parts map[string]render.Appearance) render.Style {
+// wordmarkStyle is act C's look: _gallery/hero.go's lights and chord, plus
+// lamps, its moving lights.
+func wordmarkStyle(parts map[string]render.Appearance, lamps map[string]render.LightAppearance) render.Style {
 	return render.Style{
 		Chord:      units.Millimeters(wordmarkChord),
 		Background: backgroundColor,
@@ -96,5 +106,6 @@ func wordmarkStyle(parts map[string]render.Appearance) render.Style {
 		PointLights: []solidlens.PointLight{
 			{Position: solidlens.Vec{X: -90, Y: -135, Z: 160}, Color: solidlens.RGB(0.45, 0.75, 1), Intensity: 1800},
 		},
+		Lights: lamps,
 	}
 }
