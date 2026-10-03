@@ -43,6 +43,11 @@ three and checks their output.
 rises off it and turns half a turn while the camera orbits. `cd _clips/demo && go run . -out out` writes 108 frames
 at 960x720 into `out/`.
 
+[`_clips/decad-landing/`](_clips/decad-landing/main.go) renders decad's 24 s landing-page clip in three shots: a
+flange plate built feature by feature, a shelf of six decad parts, and the DECAD wordmark.
+`cd _clips/decad-landing && go run . > assemble.sh && sh assemble.sh` writes 750 frames at 1280x720 into `out/`,
+then `out/decad-landing.mp4` and `out/decad-landing.gif`.
+
 Assemble the frames into a video with ffmpeg:
 
 ```
