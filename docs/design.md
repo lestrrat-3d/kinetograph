@@ -1130,17 +1130,16 @@ decad.sweepPayload`), so it cannot be rendered either.
 ### decad refusals a `Builder` meets
 
 decad refuses some parameter values a reshape ramp passes through. These results hold at the decad version
-`go.mod` pins (`v0.0.0-20260930143515-7dde3ae229fd`), measured by building a 96×68×16 mm plate with three cut
-holes (a bore of radius 18 mm and two bolt holes of radius 7 mm) at chord 0.05 mm with `VerifyNone`:
+`go.mod` pins (`v0.0.0-20260930143515-7dde3ae229fd`) and at decad commit `d0dc910`, measured by building a
+96×68×16 mm plate with three cut holes (a bore of radius 18 mm and two bolt holes of radius 7 mm) at chord 0.05 mm with `VerifyNone`:
 
 | Chain | Result |
 |---|---|
-| Extrude → Cut ×3 → Fillet r | r = 0.005–0.02 mm refused (`an arc segment's pinned start and end radii differ`); r = 0.05 and 0.1 mm build |
-| Extrude → Cut ×3 → Fillet 12 mm → cap-loop chamfer s | s = 0.0003–0.4 mm refused; from 0.5 to 2 mm in steps of 0.005 mm, 70 of the 301 values build, every multiple of 0.125 mm among them, and the rest are refused (`the offset changes the section's topology`) |
+| Extrude → Cut ×3 → Fillet r | below 0.032 mm, 21 of the 31 radii in steps of 0.001 mm are refused (`an arc segment's pinned start and end radii differ`), in an irregular pattern (0.003, 0.015 and 0.03 mm build); every radius from 0.032 mm up builds, but about half of them read `Suspect` in `Verify`, with a centroid bound near 2514 mm |
+| Extrude → Cut ×3 → Fillet 12 mm → cap-loop chamfer s | from 0.005 to 2 mm in steps of 0.005 mm, 93 of the 400 values build, every multiple of 0.125 mm among them; the rest are refused (`the offset changes the section's topology` or `the cap-loop offset drops a section feature`). Every chamfer that builds reads `Suspect` in `Verify`, because its volume bound is many times the volume it removes |
 | Extrude → Fillet 12 mm on the vertical edges → cap-loop chamfer → Cut | refused: `a cap-loop chamfer's mesh carries no proof of the volume it and the body it stands for differ by, so no boolean may compose it` |
 | Extrude → blind Cut (tool on a plane offset from XY) → through Cut ×2 (tools on XY) | the third Cut refused: `requested tolerance … is below the faceted body's minimum mesh bound …` |
 | Extrude → through Cut ×2 (tools on XY) → blind Cut | builds |
-| a hole tool whose end cap lies exactly in the plate's bottom face | no error, but a 188-triangle body, not a drilled plate |
 
 A `Builder` that ramps such a parameter therefore treats a value below the feature's minimum as the feature being
 absent, and rounds a value decad accepts only on a grid down to that grid. Its ramp holds 0, steps to the minimum
