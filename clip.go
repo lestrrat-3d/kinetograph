@@ -76,15 +76,22 @@ func (c *Clip) FrameTime(i int) time.Duration {
 }
 
 // Frame evaluates frame i. It returns ErrNilContext for a nil ctx and
-// ErrFrameRange when i is outside [0, FrameCount()).
+// ErrFrameRange when i is outside [0, FrameCount()). Frame is FrameCached
+// with a new BuildCache, so each call builds every parametric part once.
 func (c *Clip) Frame(ctx context.Context, i int) (*Frame, error) {
+	return c.FrameCached(ctx, i, NewBuildCache())
+}
+
+// FrameCached evaluates frame i as Frame does, taking each parametric part's
+// body from cache (see Scene.AtCached). cache MUST NOT be nil.
+func (c *Clip) FrameCached(ctx context.Context, i int, cache *BuildCache) (*Frame, error) {
 	if ctx == nil {
 		return nil, ErrNilContext
 	}
 	if i < 0 || i >= c.count {
 		return nil, fmt.Errorf("%w: frame %d of %d", ErrFrameRange, i, c.count)
 	}
-	f, err := c.scene.At(ctx, c.FrameTime(i))
+	f, err := c.scene.AtCached(ctx, c.FrameTime(i), cache)
 	if err != nil {
 		return nil, err
 	}

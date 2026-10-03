@@ -13,9 +13,12 @@ writes no video; a tool such as ffmpeg assembles the PNGs.
   transform is its own composed with its parent's.
 - **Parts and camera.** decad bodies and one perspective camera attach to nodes. A camera orbit is a revolute
   node whose axis passes through the target; a dolly is a prismatic node.
+- **Reshape.** `Scene.AddParametric` attaches a part whose body a `Builder` builds from the values of named
+  channels at each frame time, such as a block whose width is a length channel. The builder is called once per
+  distinct set of values, so a held value costs no rebuild, and several render workers never build one set twice.
 - **Clip and render.** A `Clip` samples a scene at a frame rate. `render.Renderer` tessellates each body once,
   moves the vertices by the node's world transform for each frame time, and writes `frame_000000.png`,
-  `frame_000001.png`, and so on.
+  `frame_000001.png`, and so on. A rebuilt body is tessellated once in the render call that needs it.
 
 A failing frame stops the sequence with a `*render.FrameError` that names the frame index and time. The same
 inputs give byte-identical PNGs on one Go toolchain and architecture; the rules are in
@@ -25,7 +28,9 @@ inputs give byte-identical PNGs on one Go toolchain and architecture; the rules 
 
 [`examples/kinetograph_sequence_example_test.go`](examples/kinetograph_sequence_example_test.go) is the runnable
 usage: a decad block turns on one revolute joint while the camera orbits on another, and the clip is rendered to
-PNG files. `go test ./examples/` runs it and checks its output.
+PNG files. [`examples/kinetograph_reshape_example_test.go`](examples/kinetograph_reshape_example_test.go) renders a
+slab whose width follows a channel and prints each width the builder is asked for. `go test ./examples/` runs both
+and checks their output.
 
 [`_clips/demo/`](_clips/demo/main.go) renders a 4.5 s demo clip: two pins drop into a drilled plate, and a ring
 rises off it and turns half a turn while the camera orbits. `cd _clips/demo && go run . -out out` writes 108 frames

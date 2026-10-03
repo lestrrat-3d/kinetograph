@@ -4,8 +4,9 @@ kinetograph animates solids built with [decad](https://github.com/lestrrat-3d/de
 the animation to a numbered PNG with [solidlens](https://github.com/lestrrat-3d/solidlens). A video tool such as
 ffmpeg assembles the PNGs into a clip; kinetograph writes no video itself.
 
-This document is the contract the implementation is built from. §5 states the public API of the initial pass as Go
-signatures; §9 states which pass adds what. A later pass extends this document before it extends the code.
+This document is the contract the implementation is built from. §5 states the public API as Go signatures: §5.1 to
+§5.6 are the initial pass, §5.7 and §5.8 are pass 2 (reshape). §9 states which pass adds what. A later pass extends
+this document before it extends the code.
 
 ## 1. What kinetograph is
 
@@ -28,6 +29,8 @@ kinetograph/render   solidlens scenes, PNG sequence writer       (imports solidl
   |
 kinetograph          channels, rig, camera, scene, clip         (imports decad, r3, units)
   |
+kinetograph/internal/memo  run-once-per-key cache          (imports the standard library only)
+  |
 decad                3D bodies and Body.Tessellate              github.com/lestrrat-3d/decad
   |
 r3                   Vec, Frame, Transform                       github.com/lestrrat-3d/r3
@@ -36,8 +39,8 @@ units                typed quantities                            github.com/lest
 ```
 
 The arrows point down and never back up. `render` is the only package that imports solidlens; the root package
-imports decad, `r3` and `units` and knows nothing about pixels. decad, solidlens, `r3` and `units` never import
-kinetograph.
+imports decad, `r3` and `units` and knows nothing about pixels. `internal/memo` is imported by the root package and
+by `render`, and imports neither. decad, solidlens, `r3` and `units` never import kinetograph.
 
 ## 3. Architecture
 
@@ -47,7 +50,7 @@ The four layers the design work agreed on survive, with one refinement each.
 |---|---|---|
 | Timeline | `Channel`: keyframes of one `units.Kind`, easing between them, `At(t)` | Every animated quantity is a scalar channel (D1); a camera orbit or dolly is a joint (D5) |
 | Rig | `Rig`/`Node`: a joint tree; a joint value becomes an `r3.Transform`, composed with the parent's | Bodies AND the camera attach to nodes; the tree is built parent to child, so no cycle can be written |
-| Reshape | a body as a Go function of parameters, rebuilt when they change, cached by parameter values | pass 2 (§9), behind a seam pass 1 already shapes; a failed rebuild stops the sequence (§6) |
+| Reshape | a body as a Go function of parameters, rebuilt when they change, cached by parameter values | pass 2 (§5.7): a cache lives in one render call, never in the `Renderer`; a failed rebuild stops the sequence (§6) |
 | Output | `render`: one solidlens scene per frame, one PNG per frame | a rigid pose is applied to the tessellated vertices, never by re-placing the decad body (D2) |
 
 Evaluation of one frame runs top to bottom:
@@ -58,10 +61,12 @@ Evaluation of one frame runs top to bottom:
 3. Every `Node` builds its local transform from its channel value with `r3.RotationAround` or `r3.Translation`,
    and composes it with its parent's world transform with `Transform.Then`.
 4. `Scene.At` collects one `Pose` per part (its body and its node's world transform) and the camera's world
-   position, target, up and field of view into a `Frame`.
+   position, target, up and field of view into a `Frame`. For a parametric part (§5.7) it first evaluates the
+   part's parameter channels at `t` and takes the body from the part's `Builder`, through a `BuildCache` that
+   calls `Build` once per distinct parameter tuple.
 5. `render.Renderer` maps each `Pose` to a solidlens `Model` whose vertices are the part's tessellated vertices
    under `Transform.Apply`, builds the solidlens `Camera`, adds the style's lights and background, and calls
-   `solidlens.RenderPNG`.
+   `solidlens.RenderPNG`. A rebuilt body is tessellated once per distinct body in the call that rendered it.
 
 ## 4. Decisions
 
@@ -91,6 +96,10 @@ re-tessellate per frame. A rigid motion of the vertices is the same geometry up 
 `Apply` per vertex. decad's "never expose triangles as the representation" invariant (`docs/api-design.md` §3) binds
 decad's own API; a consumer reading `Mesh.Vertices()` and `Mesh.Triangles()` as a `solidlens.TriangleSource` is the
 use decad built that output for.
+
+A parametric part (§5.7) is the one part whose body changes between frames, and only when its parameter values
+change. Each body its `Builder` returns is tessellated once in the render call that needs it, and the part's rigid
+pose then moves that mesh's vertices the same way.
 
 A reflection (`Transform.IsReflection()`) would turn every triangle inside out. `Node.Fixed` refuses one with
 `ErrReflection`; a revolute or prismatic joint cannot produce one.
@@ -175,10 +184,11 @@ library.
 and a camera orbit: a drilled plate on `Fixed`, two pins that drop into its bolt holes on `Prismatic` joints, and a
 ring that rises on a `Prismatic` joint and turns half a turn on a `Revolute` joint under it.
 
-## 5. Public API, initial pass
+## 5. Public API
 
 Signatures are normative; doc comments on the implementation carry the detail. Every constructor validates what
-it is handed and returns an error from §6's vocabulary rather than a value that would fail later.
+it is handed and returns an error from §6's vocabulary rather than a value that would fail later. §5.1 to §5.6 are
+the initial pass; §5.7 and §5.8 are pass 2, which adds declarations and changes no initial-pass signature.
 
 ### 5.1 `channel.go`: channels, keyframes and easing
 
@@ -276,7 +286,7 @@ type Camera struct {
 }
 
 // Scene is the set of parts and the camera, each attached to a node of one rig. Build it completely before
-// evaluating it; At is safe to call concurrently, AddPart and SetCamera are not safe beside At.
+// evaluating it; At is safe to call concurrently, AddPart, AddParametric and SetCamera are not safe beside At.
 type Scene struct { /* unexported */ }
 
 func NewScene(rig *Rig) *Scene
@@ -294,6 +304,7 @@ type Pose struct {
     Name      string
     Body      *decad.Body
     Transform r3.Transform // part frame -> world
+    Params    Params       // the values Body was built from; nil for a part AddPart attached (§5.7)
 }
 
 // CameraPose is the camera at one time, in world coordinates.
@@ -312,13 +323,14 @@ type Frame struct {
     Camera CameraPose
 }
 
-// At evaluates the scene at t. ctx is checked once on entry and returned as ctx.Err() when done; it is threaded
-// through so a later pass that rebuilds bodies can cancel. It returns ErrNoCamera when SetCamera was never
-// called and ErrEmptyScene when no part was added.
+// At evaluates the scene at t. ctx is checked once on entry and returned as ctx.Err() when done, and is handed to
+// every Builder (§5.7). It returns ErrNoCamera when SetCamera was never called and ErrEmptyScene when no part was
+// added.
 func (s *Scene) At(ctx context.Context, t time.Duration) (*Frame, error)
 ```
 
-`Frame.Index` is `-1` from `Scene.At`; `Clip.Frame` fills it in.
+`Frame.Index` is `-1` from `Scene.At`; `Clip.Frame` fills it in. When ctx is done after any part or the camera
+failed to evaluate, `At` returns `ctx.Err()` unwrapped instead of that failure.
 
 ### 5.4 `clip.go`: frame rate and duration
 
@@ -374,12 +386,14 @@ type Style struct {
 // several goroutines.
 type Renderer struct { /* unexported */ }
 
-// New tessellates every part of clip's scene at style.Chord. It returns ErrStyle for a non-positive Width or
-// Height, a Parts name that no part carries, or a Chord that is not a Length; decad's own tolerance errors pass
-// through unchanged. Tessellation errors name the part.
+// New tessellates every part AddPart attached at style.Chord, reading the parts from Scene.Parts; it evaluates no
+// frame and calls no Builder. It returns ErrStyle for a non-positive Width or Height or a Parts name that no part
+// carries, and ErrKind for a Chord that is not a Length; decad's own tolerance errors pass through unchanged.
+// Tessellation errors name the part.
 func New(ctx context.Context, clip *kinetograph.Clip, style Style) (*Renderer, error)
 
-// Frame renders frame i into a new image. It returns a *FrameError wrapping the cause.
+// Frame renders frame i into a new image. It builds and tessellates each parametric part once for this call. It
+// returns a *FrameError wrapping the cause.
 func (r *Renderer) Frame(ctx context.Context, i int) (*image.RGBA, error)
 
 // Sequence renders every frame of the clip to dir as PNG files and returns what a video tool needs to assemble
@@ -414,6 +428,9 @@ type FrameError struct {
 Each frame file is written to a temporary name in `dir` and renamed into place once `RenderPNG` returns, so a
 cancelled or failed run leaves no partial frame file.
 
+A `Style.Parts` name may name a parametric part; its `Appearance` then draws every body that part's `Builder`
+returns. How `Frame` and `Sequence` cache rebuilt bodies and their meshes is §5.7.
+
 ### 5.6 Executable example
 
 `examples/kinetograph_sequence_example_test.go` builds a decad block with `sketch` and `decad` directly (an `Example`
@@ -421,6 +438,98 @@ has no `testing.TB`, which `decadtest.NewBlock` needs; tests use `decadtest.NewB
 revolute joint turning 90° over one second, puts the camera on a second revolute joint orbiting the origin, renders
 a 4-frame clip at 24 fps into a temporary directory, and prints the frame count, the file names and the sequence
 pattern as its `// Output:` block. It is the end-to-end instance the initial pass is accepted on.
+
+### 5.7 `reshape.go`: parametric parts (pass 2)
+
+```go
+// Params is the values of a parametric part's parameter channels at one time, by parameter name.
+type Params map[string]units.Value
+
+// Builder builds a part's body from parameters. Build MUST return equal bodies for equal params: it reads params
+// and nothing else that changes (no clock, no randomness, no shared mutable state). Build MUST be safe to call
+// from several goroutines at once. params is a new map on every call, and Build may keep it.
+type Builder interface {
+    Build(ctx context.Context, params Params) (*decad.Body, error)
+}
+
+// AddParametric attaches a part whose body at time t is b.Build(ctx, p), where p[name] is params[name].At(t) for
+// every name in params. It returns ErrNilBuilder for a nil b, ErrForeignNode for a node of another rig,
+// ErrNilChannel for a nil channel (naming the parameter), an error wrapping units.ErrUnnamedKind or
+// units.ErrOverflowedKind for a keyframe value that has no text form, and ErrDuplicateName for a name already
+// added. An empty params is allowed: the part then has one body per BuildCache.
+func (s *Scene) AddParametric(name string, node *Node, b Builder, params map[string]*Channel) error
+
+// BuildCache holds the bodies Builders returned, by part and parameter tuple. It is safe for concurrent use, and
+// it keeps every body it built until the cache itself is dropped.
+type BuildCache struct { /* unexported */ }
+
+func NewBuildCache() *BuildCache
+
+// AtCached evaluates the scene at t as At does, taking each parametric part's body from cache. cache MUST NOT be
+// nil.
+func (s *Scene) AtCached(ctx context.Context, t time.Duration, cache *BuildCache) (*Frame, error)
+
+// FrameCached evaluates frame i as Frame does, through cache. cache MUST NOT be nil.
+func (c *Clip) FrameCached(ctx context.Context, i int, cache *BuildCache) (*Frame, error)
+
+// PartInfo is one part as AddPart or AddParametric attached it.
+type PartInfo struct {
+    Name       string
+    Body       *decad.Body // the body AddPart attached; nil for a parametric part
+    Parametric bool
+}
+
+// Parts returns the scene's parts in the order they were added. It evaluates nothing and calls no Builder.
+func (s *Scene) Parts() []PartInfo
+```
+
+`Scene.At(ctx, t)` is `AtCached(ctx, t, NewBuildCache())`, and `Clip.Frame` is `FrameCached` with a new cache, so
+each call of either builds every parametric part once. In the `Frame` they return, a parametric part's `Pose.Body`
+is the body built for that time, `Pose.Transform` is its node's `World(t)`, and `Pose.Params` is a new map holding
+the values the body was built from.
+
+**Cache key.** A `BuildCache` entry is keyed by the part and by the text of its parameter values: each value's
+`Value.MarshalText()`, in parameter-name order, joined by `"\n"`. `AddParametric` sorts the names once with
+`slices.Sorted` and keeps them as a slice, so evaluation never iterates the `params` map. `MarshalText` writes only
+printable ASCII, so a value's text holds no `"\n"` and the join is unambiguous; the names are not in the key because
+one part's set of names is fixed. `MarshalText` round-trips exactly, so equal text means an equal unit and an equal
+magnitude: a cache hit never returns a body built from different values. Equal quantities in different units
+(`10 mm` and `1 cm`) have different text and are built twice.
+
+**Once per tuple.** The first caller for a key calls `Build`; a caller that asks for the same key while that call
+runs waits for it and receives its result. `Build` therefore runs once per distinct (part, tuple) per cache,
+whatever the number of goroutines sharing the cache. A failed `Build` is kept: a later frame with the same tuple
+returns the same error and `Build` is not called again. The one exception is a `Build` that fails while the
+caller's ctx is done: that entry is dropped, and a waiting caller whose ctx is still live calls `Build` itself, so
+one caller's cancellation never becomes another caller's error.
+
+**Errors at a frame.** `AtCached` wraps every failure with the part's name and the time: a parameter channel's
+`At` error, a `MarshalText` error, the `Builder`'s own error (`errors.Is` reaches it), and `ErrNilBody` when `Build`
+returns a nil body and a nil error. When ctx is done after any failure, `AtCached` returns `ctx.Err()` unwrapped.
+
+**Rendering.** A `Renderer` holds no cache and stays immutable. `render.New` reads the parts with `Scene.Parts`,
+tessellates the bodies `AddPart` attached, and calls no `Builder`, so a `Build` failure at frame 0 is a
+`*FrameError` from `Frame` or `Sequence`, never an error from `New`. `Renderer.Frame` makes a new `BuildCache` and a
+new mesh cache for its one call. `Renderer.Sequence` makes one `BuildCache` and one mesh cache per call, shares them
+between its workers, and drops them when it returns, so it holds every rebuilt body and mesh of the run until then.
+The mesh cache is keyed by the `*decad.Body` the `BuildCache` returned and tessellates each body once with
+`decad.VerifyNone`, with the same run-once-per-key rule.
+
+`Sequence` maps a failure at frame k to `*FrameError{Index: k, Time: t_k, Err: cause}`: a `Build` error, or a
+tessellation error naming the part. Every frame whose tuple failed fails with the same cause, and the lowest index
+is the one reported (§6). Which worker calls `Build` for a tuple depends on scheduling; the bytes do not, because a
+`Builder` returns equal bodies for equal `Params` and decad tessellates an equal payload to an equal mesh (§7).
+
+A `Builder` should create its own `decad.New()` document on every call, as decad's `_gallery` does, so rebuilt bodies do
+not accumulate in one document and concurrent calls share no document.
+
+### 5.8 Executable example, pass 2
+
+`examples/kinetograph_reshape_example_test.go` defines a `Builder` that extrudes a W × 20 mm rectangle 10 mm tall,
+with W a `Length` channel that holds 10 mm from 0 to 250 ms and rises linearly to 30 mm at 750 ms. It renders the
+4-frame clip at 4 fps (widths 10, 10, 20 and 30 mm) with one worker into a temporary directory. The `Builder` prints
+each width it is asked to build, so the `// Output:` block shows three builds for four frames, followed by the frame
+count and the file names. It is the end-to-end instance pass 2 is accepted on.
 
 ## 6. Error behaviour
 
@@ -439,21 +548,26 @@ message names the offending argument.
 | zero or non-finite revolute axis | `r3.ErrDegenerateAxis` (passed through) | `Revolute` |
 | zero or non-finite prismatic direction | `ErrDegenerateDirection` | `Prismatic` |
 | transform composition overflows | `r3.ErrNonFinite` / `r3.ErrNotOrthonormal` (passed through) | `Node.World`, surfaced by `Scene.At` |
-| part name already used | `ErrDuplicateName` | `AddPart` |
-| node belongs to another rig | `ErrForeignNode` | `AddPart`, `SetCamera` |
-| nil body, nil channel | `ErrNilBody`, `ErrNilChannel` | `AddPart`, `SetCamera`, `Revolute`, `Prismatic` |
+| part name already used | `ErrDuplicateName` | `AddPart`, `AddParametric` |
+| node belongs to another rig | `ErrForeignNode` | `AddPart`, `AddParametric`, `SetCamera` |
+| nil body, nil channel | `ErrNilBody`, `ErrNilChannel` | `AddPart`, `SetCamera`, `Revolute`, `Prismatic`, `AddParametric` (a nil parameter channel) |
+| nil builder | `ErrNilBuilder` | `AddParametric` |
+| parameter value with no text form | `units.ErrUnnamedKind` / `units.ErrOverflowedKind` (wrapped) | `AddParametric` (keyframe values), `Scene.At` (an evaluated value) |
+| `Build` fails | the `Builder`'s error, wrapped with the part name and time | `Scene.At`, `Scene.AtCached`, `Clip.Frame`, `Clip.FrameCached` |
+| `Build` returns a nil body and a nil error | `ErrNilBody` (wrapped with the part name and time) | `Scene.At`, `Scene.AtCached`, `Clip.Frame`, `Clip.FrameCached` |
 | no camera, no parts | `ErrNoCamera`, `ErrEmptyScene` | `Scene.At`, `NewClip` |
 | fps < 1 or duration <= 0 | `ErrInvalidClip` | `NewClip` |
 | frame index outside the clip | `ErrFrameRange` | `Clip.Frame`, `Renderer.Frame` |
 | nil context | `ErrNilContext` | every function taking one, before any work |
 | style has a non-positive dimension or an unknown part name | `render.ErrStyle` | `render.New` |
-| tessellation fails | decad's error, wrapped with the part name | `render.New` |
-| anything at frame i (evaluation, solidlens refusal, file I/O) | `*render.FrameError{Index: i, Time: t_i, Err: cause}` | `Renderer.Frame`, `Renderer.Sequence` |
+| tessellation fails | decad's error, wrapped with the part name | `render.New`; for a rebuilt body, inside the frame's `FrameError` |
+| anything at frame i (evaluation, `Build`, tessellation of a rebuilt body, solidlens refusal, file I/O) | `*render.FrameError{Index: i, Time: t_i, Err: cause}` | `Renderer.Frame`, `Renderer.Sequence` |
 | cancelled | `ctx.Err()` unchanged, never wrapped in a `FrameError` | everywhere |
 
 `Sequence` with several workers may see several frames fail before it stops; it returns the `FrameError` with the
 lowest `Index`, so the reported frame does not depend on scheduling. A frame that failed has no file in `dir`;
-frames with a lower index that succeeded keep theirs.
+frames with a lower index that succeeded keep theirs. A `BuildCache` keeps a failed `Build` (§5.7), so every frame
+whose parameter tuple failed reports the same cause.
 
 ## 7. Determinism
 
@@ -467,7 +581,9 @@ The claim: the same scene, style and clip produce byte-identical PNG files on th
 | Easings use multiplication and subtraction only, no `math.Pow` | identical results everywhere `float64` is IEEE |
 | Interpolation is `units.Value` arithmetic | `units` rounds once and canonicalises zero |
 | Transforms are `r3` constructors and `Then`; vertices are `Apply` | `r3` sums in a fixed order |
-| Each part is tessellated once, in `render.New`; decad promises equal vertex and index order for equal payload, tolerance and level (`docs/tessellation-design.md` §1, Determinism row) | the base mesh never changes between frames |
+| Each part `AddPart` attached is tessellated once, in `render.New`; each rebuilt body once per render call; decad promises equal vertex and index order for equal payload, tolerance and level (`docs/tessellation-design.md` §1, Determinism row) | a part's base mesh changes only when its parameter tuple does |
+| A parametric part's cache key is each parameter's `Value.MarshalText()` in name order; the names are sorted once with `slices.Sorted` in `AddParametric` | which body a frame gets never depends on map order |
+| `Build` runs once per distinct tuple per `BuildCache`, and a `Builder` returns equal bodies for equal `Params` (§5.7) | which worker built a body cannot reach the bytes |
 | Models are emitted in `AddPart` order; lights in `Style` order | solidlens draws models and edge lines in the order given, and its edge records are kept in first-encounter order |
 | No map is iterated into any output; `Style.Parts` is only looked up by name | Go randomises map order |
 | No `time.Now`, no randomness, no environment reads | nothing outside the inputs reaches the pixels |
@@ -482,15 +598,17 @@ the same limit for its bounds. Tests therefore never commit a PNG golden; §10 s
 
 | Path | Owns |
 |---|---|
-| `doc.go` | Package doc: scope, layering (`kinetograph -> decad, r3, units`; `render -> solidlens`), and D1–D9 by name. |
+| `doc.go` | Package doc: scope, layering (`kinetograph -> decad, r3, units`; `render -> solidlens`), D1–D9 by name, and reshape (§5.7). |
 | `errors.go` | The sentinel vocabulary of §6. |
 | `channel.go` | `Easing` and the five provided easings, `Keyframe`, `Channel`, `NewChannel`, `Constant`. |
 | `rig.go` | `Rig`, `Node`, the three joint constructors, `Local`, `World`. |
 | `camera.go` | `Camera`, `CameraPose`, and the node-local to world evaluation. |
-| `scene.go` | `Scene`, `Pose`, `Frame`, `AddPart`, `SetCamera`, `At`. |
-| `clip.go` | `Clip`, `NewClip`, `FrameCount`, `FrameTime`, `Frame`. |
+| `scene.go` | `Scene`, `Pose`, `Frame`, `PartInfo`, `AddPart`, `SetCamera`, `Parts`, `At`, `AtCached`. |
+| `reshape.go` | `Params`, `Builder`, `AddParametric`, `BuildCache`, `NewBuildCache`, and the cache key encoding. |
+| `clip.go` | `Clip`, `NewClip`, `FrameCount`, `FrameTime`, `Frame`, `FrameCached`. |
+| `internal/memo/memo.go` | `memo.Map`: calls a function once per key, hands concurrent callers for that key the same result, and drops a result whose caller's ctx was done. Backs `BuildCache` and `render`'s mesh cache. |
 | `render/style.go` | `Appearance`, `Style`, `ErrStyle`, style validation. |
-| `render/renderer.go` | `Renderer`, `New`, `Frame`; the posed `TriangleSource`; the solidlens scene assembly. |
+| `render/renderer.go` | `Renderer`, `New`, `Frame`; the posed `TriangleSource`; the per-call build and mesh caches; the solidlens scene assembly. |
 | `render/sequence.go` | `Sequence`, `Renderer.Sequence`, `SequenceOption`, `FrameError`, atomic frame file writes. |
 | `examples/` | `Example_kinetograph_*` with verified `// Output:` blocks. Never `package main`. |
 | `_clips/demo/` | The demo clip program, its own module (D11): `parts.go` builds the bodies, `scene.go` the rig, channels and style, `main.go` the flags and the `Sequence` call. |
@@ -522,10 +640,7 @@ Why each piece is in:
 
 Why each piece is out:
 
-- Reshape: the landing-page motions are rigid. Reshape adds a rebuild cache, a per-run cache object (a `Renderer`
-  must stay immutable, so the cache lives in the `Sequence` call), a parameter-to-key encoding and its own failure
-  tests. `Scene.At` already takes `ctx` and `Pose.Body` is already per frame, so pass 2 adds without changing a
-  pass-1 signature.
+- Reshape: the landing-page motions are rigid. Reshape is pass 2.
 - Animated lights: lights are static in `Style`; the clip does not need them to move.
 - Vector channels: a moving camera target is a camera on a moving node (D5), so no `r3.Vec` is ever interpolated
   in pass 1.
@@ -533,24 +648,20 @@ Why each piece is out:
 
 ### Pass 2, reshape
 
-```go
-// Builder builds a body from parameters. It is called once per distinct parameter tuple.
-type Builder interface {
-    Build(ctx context.Context, params Params) (*decad.Body, error)
-}
+Everything in §5.7. The acceptance instance is §5.8's example: a real `Builder` extruding a real decad body whose
+width follows a `Length` channel, rendered by solidlens to PNG files, with the builds and file names printed and
+verified by `go test`.
 
-// Params is the channel values at one time, by parameter name.
-type Params map[string]units.Value
+Why each piece is in:
 
-// AddParametric attaches a part whose body is b.Build(ctx, values of params at t).
-func (s *Scene) AddParametric(name string, node *Node, b Builder, params map[string]*Channel) error
-```
-
-Cache key: each parameter's `Value.MarshalText()` (an exact round trip) joined in sorted parameter-name order.
-Pass 2 adds to `Pose` a `Params Params` field, a per-`Sequence`-call cache from key to `(body, mesh)`, and
-the test that a `Build` error at frame k returns `FrameError{Index: k, Time: t_k}` with no file for frame k and files
-for every earlier frame. A `Builder` should create its own `decad.New()` document per call, as `_gallery` does, so
-rebuilt bodies do not accumulate in one document.
+- `Builder` and `Params`: a body that changes shape is a Go function of parameters, and the parameters are scalar
+  channels like every other animated quantity (D1).
+- `BuildCache` with its text key: a held or repeated tuple must not rebuild, and several workers must not build
+  one tuple twice. The key is exact (`MarshalText` round-trips), so caching never changes a pixel.
+- `AtCached`, `FrameCached` and `Parts`: `render` needs to evaluate frames through a cache it owns per call, and to
+  learn the parts without building any. The initial-pass `At` and `Frame` keep their signatures and build afresh on
+  each call.
+- `Pose.Params`: a caller reading a `Frame` sees the values a body was built from, not only the body.
 
 ### Pass 3, animated appearance
 
@@ -568,7 +679,9 @@ tests (D11).
 
 Every test asserts a computed result: a transform component, a `units.Value`, a pixel coordinate, a file count.
 Tests use `testify/require` in an external `_test` package with `t.Context()`, and build decad bodies with
-`decadtest.NewBlock` (decad's own fixture kit, standard `testing` only). No test commits a PNG golden (§7).
+`decadtest.NewBlock` (decad's own fixture kit, standard `testing` only). A test `Builder` builds its block with
+`sketch` and `decad` directly and returns errors, because `render` calls it on worker goroutines, where a
+`testing.TB` must not fail the test. No test commits a PNG golden (§7).
 
 | Area | Test | Asserts |
 |---|---|---|
@@ -596,7 +709,25 @@ Tests use `testify/require` in an external `_test` package with `t.Context()`, a
 | render | a camera whose FOV channel is 179.5° at frame 4 only and 40° at every other frame | `Sequence` returns a `*FrameError` with `Index == 4`, `Time == FrameTime(4)`, files 0–3 present, no file 4 |
 | render | a context that reports cancelled once frame 2's file exists, one worker | `ctx.Err()` returned unwrapped; files 0–2 present, no other file, no `.tmp` file left in `dir` |
 | render | `Style` with an unknown part name, zero width, an Angle chord | `ErrStyle`, `ErrStyle`, `ErrKind` |
+| reshape | `AddParametric` with a nil builder, a foreign node, a nil channel, a length-times-angle keyframe value, a duplicate name | `ErrNilBuilder`, `ErrForeignNode`, `ErrNilChannel`, `units.ErrUnnamedKind`, `ErrDuplicateName`; no `Build` call |
+| reshape | a parametric block on a prismatic node, width 10 to 30 mm over 1 s, `Scene.At` at 500 ms twice | `Pose.Params` holds 20 mm and 10 mm exactly; the body's measured bounds are ±10 × ±5 × 0–10 mm; `Pose.Transform` equals the node's `World(t)`; each `At` call builds once |
+| reshape | `AtCached` through one cache from 16 goroutines at four times sharing one tuple, then at two times with a new width and a new depth | `Build` called once and every `Pose.Body` the same pointer; each new tuple adds exactly one call; `FrameCached` reuses the cached body |
+| reshape | width and depth swap values between two times (10 × 20 mm, then 20 × 10 mm), one cache | `Build` called twice; the two bodies' measured bounds are ±5 × ±10 and ±10 × ±5 mm |
+| reshape | `Build` returns an error; `Build` returns a nil body | `errors.Is` reaches the builder's error; `ErrNilBody`; the message names the part; a later time with the same tuple fails without another `Build` |
+| reshape | a `Builder` that cancels ctx and fails | `ctx.Err()` returned unwrapped; the next `AtCached` with a live ctx builds again |
+| reshape | `Scene.Parts` on a scene with both kinds of part | names and order as added; `Body` set for the `AddPart` part, nil and `Parametric` for the other; no `Build` call |
+| memo | `Map.Get` from 8 goroutines on one key, released only once 7 are parked on the entry | one call; every caller gets the same result |
+| memo | a caller parked on a call that then fails under its own cancelled ctx | the parked caller calls its own function once and gets its result |
+| memo | a failing call; a call failing under a cancelled ctx; a waiter with a cancelled ctx; a panicking call | the failure kept; the cancelled failure dropped and rebuilt; `ctx.Err()`; the entry dropped |
+| render | a parametric block whose width steps from 10 to 20 mm at frame 3 of 6 | from frame 0 to frame 5 the blob's pixel width grows by at least 4 px and stays centred within 1 px; frame 5's PNG bytes equal the same 20 mm block attached with `AddPart` |
+| render | `Sequence` of a parametric clip with 2 distinct tuples over 6 frames, with 1 and with 3 workers | `Build` called exactly 2 times in each run; `render.New` called it 0 times; the 6 files are byte-identical between the two runs |
+| render | a `Builder` that fails for the tuple first reached at frame 3, with 1 and with 3 workers | `*FrameError` with `Index == 3`, `Time == FrameTime(3)`, `errors.Is` reaches the builder's error; exactly files 0–2 present, no `.tmp` file |
+| render | 3 workers; a `Builder` refusing frame 4's tuple at once and frame 3's only after that refusal | refusals in that order; `*FrameError` with `Index == 3`; exactly files 0–2 present |
+| render | a parametric part with a zero chord | `render.New` succeeds; `Frame(2)` returns a `*FrameError` with `Index == 2` naming the part's tessellation; one `Build` call |
+| render | a `Builder` that fails at every frame | `render.New` succeeds; `Frame(0)` returns a `*FrameError` with `Index == 0` |
+| render | `Style.Parts` naming a parametric part | accepted; that part draws in its own colour |
 | examples | `Example_kinetograph_sequence` | the `// Output:` block, verified by `go test ./examples/` |
+| examples | `Example_kinetograph_reshape` | the `// Output:` block, verified by `go test ./examples/` |
 
 The blob-centroid assertions read what the renderer drew rather than re-deriving solidlens's projection, so a
 change to solidlens's camera model fails them without kinetograph having copied that model.
@@ -635,3 +766,5 @@ Every design choice is stated once, in the section that owns it. This section on
 | lights are static in pass 1 and move in pass 3 | §4 D6, §9 |
 | time is `time.Duration`, a frame rate an `int` | §4 D3, §7 |
 | reshape is pass 2 | §3, §9 |
+| a reshape cache lives in one render call, never in the `Renderer` | §5.7 |
+| the reshape cache key is each value's `MarshalText()` in sorted-name order | §5.7, §7 |

@@ -10,15 +10,18 @@ import (
 	"github.com/lestrrat-3d/units"
 )
 
+// part is one attached part: body for AddPart, param for AddParametric.
 type part struct {
-	name string
-	node *Node
-	body *decad.Body
+	name  string
+	node  *Node
+	body  *decad.Body
+	param *parametric
 }
 
 // Scene is the set of parts and the camera, each attached to a node of one
-// rig. Build it completely before evaluating it; At is safe to call
-// concurrently, AddPart and SetCamera are not safe beside At.
+// rig. Build it completely before evaluating it; At and AtCached are safe to
+// call concurrently, AddPart, AddParametric and SetCamera are not safe beside
+// them.
 type Scene struct {
 	rig        *Rig
 	parts      []part
@@ -79,11 +82,31 @@ func (s *Scene) validate() error {
 	return nil
 }
 
-// Pose is one part at one time.
+// PartInfo is one part as AddPart or AddParametric attached it.
+type PartInfo struct {
+	Name       string
+	Body       *decad.Body // the body AddPart attached; nil for a parametric part
+	Parametric bool
+}
+
+// Parts returns the scene's parts in the order they were added. It evaluates
+// nothing and calls no Builder.
+func (s *Scene) Parts() []PartInfo {
+	infos := make([]PartInfo, len(s.parts))
+	for i, p := range s.parts {
+		infos[i] = PartInfo{Name: p.name, Body: p.body, Parametric: p.param != nil}
+	}
+	return infos
+}
+
+// Pose is one part at one time. For a parametric part, Body is the body built
+// for that time and Params a new map holding the values it was built from;
+// Params is nil for a part AddPart attached.
 type Pose struct {
 	Name      string
 	Body      *decad.Body
 	Transform r3.Transform // part frame -> world
+	Params    Params
 }
 
 // Frame is the scene evaluated at one time. Poses are in AddPart order.
@@ -96,10 +119,21 @@ type Frame struct {
 }
 
 // At evaluates the scene at t. ctx is checked once on entry and returned as
-// ctx.Err() when done; it is threaded through so a later pass that rebuilds
-// bodies can cancel. It returns ErrNilContext for a nil ctx, ErrNoCamera when
-// SetCamera was never called and ErrEmptyScene when no part was added.
+// ctx.Err() when done, and is handed to every Builder. It returns
+// ErrNilContext for a nil ctx, ErrNoCamera when SetCamera was never called and
+// ErrEmptyScene when no part was added. At is AtCached with a new BuildCache,
+// so each call builds every parametric part once.
 func (s *Scene) At(ctx context.Context, t time.Duration) (*Frame, error) {
+	return s.AtCached(ctx, t, NewBuildCache())
+}
+
+// AtCached evaluates the scene at t as At does, taking each parametric part's
+// body from cache and building it there on a miss. A failure to evaluate a
+// part names the part and the time and wraps the cause: a channel error, a
+// parameter value with no text form, the Builder's own error, or ErrNilBody
+// when Build returns a nil body and a nil error. When ctx is done after a
+// failure, AtCached returns ctx.Err() unwrapped instead. cache MUST NOT be nil.
+func (s *Scene) AtCached(ctx context.Context, t time.Duration, cache *BuildCache) (*Frame, error) {
 	if ctx == nil {
 		return nil, ErrNilContext
 	}
@@ -111,19 +145,44 @@ func (s *Scene) At(ctx context.Context, t time.Duration) (*Frame, error) {
 	}
 	poses := make([]Pose, len(s.parts))
 	for i, p := range s.parts {
-		world, err := p.node.World(t)
+		pose, err := p.pose(ctx, cache, t)
 		if err != nil {
-			return nil, fmt.Errorf("kinetograph: part %q at %s: %w", p.name, t, err)
+			return nil, s.failure(ctx, fmt.Errorf("kinetograph: part %q at %s: %w", p.name, t, err))
 		}
-		poses[i] = Pose{Name: p.name, Body: p.body, Transform: world}
+		poses[i] = pose
 	}
 	world, err := s.cameraNode.World(t)
 	if err != nil {
-		return nil, fmt.Errorf("kinetograph: camera at %s: %w", t, err)
+		return nil, s.failure(ctx, fmt.Errorf("kinetograph: camera at %s: %w", t, err))
 	}
 	fov, err := s.camera.FOV.At(t)
 	if err != nil {
-		return nil, fmt.Errorf("kinetograph: camera FOV at %s: %w", t, err)
+		return nil, s.failure(ctx, fmt.Errorf("kinetograph: camera FOV at %s: %w", t, err))
 	}
 	return &Frame{Index: -1, Time: t, Poses: poses, Camera: s.camera.pose(world, fov)}, nil
+}
+
+// failure returns ctx.Err() when ctx is done, and err otherwise.
+func (s *Scene) failure(ctx context.Context, err error) error {
+	if cerr := ctx.Err(); cerr != nil {
+		return cerr
+	}
+	return err
+}
+
+// pose evaluates p at t, building its body through cache when p is
+// parametric.
+func (p part) pose(ctx context.Context, cache *BuildCache, t time.Duration) (Pose, error) {
+	world, err := p.node.World(t)
+	if err != nil {
+		return Pose{}, err
+	}
+	if p.param == nil {
+		return Pose{Name: p.name, Body: p.body, Transform: world}, nil
+	}
+	body, params, err := p.param.body(ctx, cache, t)
+	if err != nil {
+		return Pose{}, err
+	}
+	return Pose{Name: p.name, Body: body, Transform: world, Params: params}, nil
 }

@@ -13,13 +13,14 @@ kinetograph writes no video.
   easing.
 - Rig: joints form a tree. A joint value becomes an `r3.Transform`; a child's world
   transform is its own composed with its parent's. Bodies AND the camera attach to nodes.
-- Reshape (pass 2): a body as a Go function of parameters, rebuilt when they change.
+- Reshape: a `Builder` makes a part's body from channel values (`Params`); a `BuildCache`
+  calls it once per distinct tuple.
 - Output: `render` builds one solidlens scene per frame and writes one PNG per frame.
 
-**Current state: pass 1 (the initial pass) is implemented.** `docs/design.md` is the contract.
-§5 there is the public API of the initial pass, §9 names what each later pass adds (reshape,
-animated appearance and the landing-page clip are not built), §12 points at where each
-settled choice lives.
+**Current state: pass 1 (the initial pass) and pass 2 (reshape) are implemented.**
+`docs/design.md` is the contract. §5.1–§5.6 there are the initial pass's public API, §5.7–§5.8
+reshape's, §9 names what each later pass adds (animated appearance and the landing-page clip
+are not built), §12 points at where each settled choice lives.
 
 ## Read before you write
 
@@ -30,7 +31,7 @@ settled choice lives.
 | Channel, easing or interpolation code | `docs/design.md` §5.1, §7 |
 | Rig, joint or camera code | `docs/design.md` §4 D1, D2, D5, §5.2, §5.3 |
 | Anything under `render/` | `docs/design.md` §5.5, §6, §7; decad's `_gallery/` (the reference use of solidlens) |
-| Reshape code | `docs/design.md` §9 pass 2 — extend the doc first |
+| Reshape code (`reshape.go`, `internal/memo/`, render's per-call caches) | `docs/design.md` §5.7, §7 |
 | Tests | `docs/design.md` §10 |
 | Anything the surrounding `.go` file already documents | that file's own doc comments |
 
@@ -48,6 +49,11 @@ settled choice lives.
   once per `(body, chord)` with `decad.WithVerification(decad.VerifyNone)`; per frame apply
   the node's world transform with `r3.Transform.Apply`. NEVER call `Body.Placed` or
   `Body.PlacedCopy` per frame. A reflection (`Transform.IsReflection()`) is `ErrReflection`.
+- **A reshape cache lives in one call, never on a receiver.** `Renderer` and `Scene` stay
+  immutable; `Renderer.Frame`/`Sequence` make a `BuildCache` and a mesh cache per call. The
+  key is each `Value.MarshalText()` in sorted parameter-name order (names sorted once in
+  `AddParametric`). Build and tessellation go through `internal/memo`, so several workers
+  never build or tessellate one key twice.
 - **NEVER hand-roll coordinate math.** Vectors, transforms, composition, normalization →
   `r3`. A unit direction is `Vec.Normalize`; composition is `Then`; `Then` order is
   `child.Local(t).Then(parent.World(t))`.
