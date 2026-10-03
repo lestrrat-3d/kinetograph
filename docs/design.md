@@ -171,6 +171,10 @@ The clip program lives in `_clips/decad-landing/` with its own `go.mod`, modeled
 pass 4). The `_` prefix keeps it out of the root module, its tests and its linter, so scene content never joins the
 library.
 
+`_clips/demo/` is a second clip program of the same shape. It renders a 4.5 s clip that uses all three joint kinds
+and a camera orbit: a drilled plate on `Fixed`, two pins that drop into its bolt holes on `Prismatic` joints, and a
+ring that rises on a `Prismatic` joint and turns half a turn on a `Revolute` joint under it.
+
 ## 5. Public API, initial pass
 
 Signatures are normative; doc comments on the implementation carry the detail. Every constructor validates what
@@ -489,6 +493,7 @@ the same limit for its bounds. Tests therefore never commit a PNG golden; §10 s
 | `render/renderer.go` | `Renderer`, `New`, `Frame`; the posed `TriangleSource`; the solidlens scene assembly. |
 | `render/sequence.go` | `Sequence`, `Renderer.Sequence`, `SequenceOption`, `FrameError`, atomic frame file writes. |
 | `examples/` | `Example_kinetograph_*` with verified `// Output:` blocks. Never `package main`. |
+| `_clips/demo/` | The demo clip program, its own module (D11): `parts.go` builds the bodies, `scene.go` the rig, channels and style, `main.go` the flags and the `Sequence` call. |
 | `docs/design.md` | This document. |
 | `.github/workflows/ci.yml` | golangci-lint v2.12.2 and `go vet`; `go test -race ./...` on ubuntu, `go test ./...` on macOS and Windows; `go mod tidy` diff; govulncheck. Copied from decad's with the shard matrix removed. |
 | `.golangci.yml` | decad's house config, copied. |

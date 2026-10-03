@@ -27,6 +27,10 @@ inputs give byte-identical PNGs on one Go toolchain and architecture; the rules 
 usage: a decad block turns on one revolute joint while the camera orbits on another, and the clip is rendered to
 PNG files. `go test ./examples/` runs it and checks its output.
 
+[`_clips/demo/`](_clips/demo/main.go) renders a 4.5 s demo clip: two pins drop into a drilled plate, and a ring
+rises off it and turns half a turn while the camera orbits. `cd _clips/demo && go run . -out out` writes 108 frames
+at 960x720 into `out/`.
+
 Assemble the frames into a video with ffmpeg:
 
 ```
