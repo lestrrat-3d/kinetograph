@@ -136,18 +136,6 @@ testable without a renderer, and nothing in it names a color, a light or a pixel
 solidlens scene. Appearance (materials, back materials, edges, lights, background) is `render.Style`'s. Lights are
 static: they are listed in `Style` and do not move with the clip. Pass 3 (§9) adds lights attached to nodes.
 
-### D10. `sketch` is a test-and-example-only dependency
-
-decad bodies are built from `sketch` profiles, so kinetograph's tests and examples import
-`github.com/lestrrat-3d/sketch` to build the bodies they animate, and `go.mod` requires it. No production package
-imports it: the root package takes a finished `*decad.Body`, and `render` takes a `Frame`.
-
-### D11. The landing-page clip is a nested module
-
-The clip program lives in `_clips/decad-landing/` with its own `go.mod`, modeled on decad's `_gallery/` (§9,
-pass 4). The `_` prefix keeps it out of the root module, its tests and its linter, so scene content never joins the
-library.
-
 ### D7. Output is a numbered PNG sequence
 
 `render.Renderer.Sequence` writes `frame_000000.png`, `frame_000001.png`, … into a directory and reports the
@@ -170,6 +158,18 @@ later frame is written after the failing one is detected (§6).
 ### D9. Same input gives byte-identical PNGs on one toolchain and architecture
 
 §7 states the rules that keep this true and the one limit (FMA contraction differs between amd64 and arm64).
+
+### D10. `sketch` is a test-and-example-only dependency
+
+decad bodies are built from `sketch` profiles, so kinetograph's tests and examples import
+`github.com/lestrrat-3d/sketch` to build the bodies they animate, and `go.mod` requires it. No production package
+imports it: the root package takes a finished `*decad.Body`, and `render` takes a `Frame`.
+
+### D11. The landing-page clip is a nested module
+
+The clip program lives in `_clips/decad-landing/` with its own `go.mod`, modeled on decad's `_gallery/` (§9,
+pass 4). The `_` prefix keeps it out of the root module, its tests and its linter, so scene content never joins the
+library.
 
 ## 5. Public API, initial pass
 
