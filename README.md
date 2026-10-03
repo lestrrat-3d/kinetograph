@@ -13,6 +13,11 @@ writes no video; a tool such as ffmpeg assembles the PNGs.
   transform is its own composed with its parent's.
 - **Parts and camera.** decad bodies and one perspective camera attach to nodes. A camera orbit is a revolute
   node whose axis passes through the target; a dolly is a prismatic node.
+- **Lights.** A point or directional light attaches to a node like the camera, so a light that circles a part is
+  a light on a revolute node. `render.Style.Lights` gives each light, by name, a color and an intensity channel.
+- **Fades.** `render.Appearance.Fade` is a part's opacity channel, from 0 to 1. A part at 0 is left out of the
+  frame. A part between 0 and 1 is mixed over what is behind it: render draws the frame in layers, with and
+  without each fading part, and mixes them from the farthest fading part to the nearest.
 - **Reshape.** `Scene.AddParametric` attaches a part whose body a `Builder` builds from the values of named
   channels at each frame time, such as a block whose width is a length channel. The builder is called once per
   distinct set of values, so a held value costs no rebuild, and several render workers never build one set twice.
@@ -29,8 +34,10 @@ inputs give byte-identical PNGs on one Go toolchain and architecture; the rules 
 [`examples/kinetograph_sequence_example_test.go`](examples/kinetograph_sequence_example_test.go) is the runnable
 usage: a decad block turns on one revolute joint while the camera orbits on another, and the clip is rendered to
 PNG files. [`examples/kinetograph_reshape_example_test.go`](examples/kinetograph_reshape_example_test.go) renders a
-slab whose width follows a channel and prints each width the builder is asked for. `go test ./examples/` runs both
-and checks their output.
+slab whose width follows a channel and prints each width the builder is asked for.
+[`examples/kinetograph_appearance_example_test.go`](examples/kinetograph_appearance_example_test.go) fades a block
+in while a point light circles it, and prints the light's position at each frame. `go test ./examples/` runs all
+three and checks their output.
 
 [`_clips/demo/`](_clips/demo/main.go) renders a 4.5 s demo clip: two pins drop into a drilled plate, and a ring
 rises off it and turns half a turn while the camera orbits. `cd _clips/demo && go run . -out out` writes 108 frames

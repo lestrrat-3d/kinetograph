@@ -5,8 +5,9 @@
 //
 // # Layering
 //
-// The root package imports decad, r3 and units and names no color, light or
-// pixel. The render subpackage imports kinetograph and solidlens, and is the
+// The root package imports decad, r3 and units and names no color or pixel. It
+// names a light only as a kind and a pose: where the light is and which way it
+// shines. The render subpackage imports kinetograph and solidlens, and is the
 // only package that imports solidlens. decad, solidlens, r3 and units never
 // import kinetograph.
 //
@@ -21,6 +22,16 @@
 // orbit is a revolute node and a dolly is a prismatic one. A Scene collects
 // them; a Clip samples a Scene at a frame rate; Clip.Frame returns a Frame of
 // poses as r3.Transforms.
+//
+// # Lights and fades
+//
+// Scene.AddLight attaches a PointLight or a DirectionalLight to a node, as
+// the camera is attached (D5), and Frame.Lights holds each light's world
+// position or unit direction at the frame time. The light's color and its
+// intensity channel are render.Style's, bound by the light's name, and so is
+// each part's fade: a Dimensionless channel of opacity in [0, 1]. render
+// leaves a part at fade 0 out of the frame and mixes a part between 0 and 1
+// over what is behind it by rendering the frame in layers.
 //
 // # Reshape
 //
