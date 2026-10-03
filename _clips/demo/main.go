@@ -16,6 +16,7 @@
 //     yuv420p needs both to be even.
 //   - -fps sets the frame rate (default 24).
 //   - -workers sets how many frames render at once (default: the CPU count).
+//   - -smoke renders the first frame alone at 160x90 and prints no command.
 package main
 
 import (
@@ -25,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/lestrrat-3d/kinetograph"
 	"github.com/lestrrat-3d/kinetograph/render"
@@ -43,13 +45,20 @@ func run(ctx context.Context) error {
 	height := flag.Int("height", 720, "frame height in pixels")
 	fps := flag.Int("fps", 24, "frames per second")
 	workers := flag.Int("workers", runtime.NumCPU(), "frames rendered at once")
+	smoke := flag.Bool("smoke", false, "render the first frame alone at 160x90")
 	flag.Parse()
+
+	length := clipDuration
+	if *smoke {
+		*width, *height = 160, 90
+		length = time.Second / time.Duration(*fps)
+	}
 
 	scene, err := buildScene(ctx)
 	if err != nil {
 		return fmt.Errorf("build the scene: %w", err)
 	}
-	clip, err := kinetograph.NewClip(scene, *fps, clipDuration)
+	clip, err := kinetograph.NewClip(scene, *fps, length)
 	if err != nil {
 		return fmt.Errorf("build the clip: %w", err)
 	}
@@ -63,6 +72,9 @@ func run(ctx context.Context) error {
 	}
 
 	fmt.Fprintf(os.Stdout, "wrote %d frames to %s\n", seq.Frames, seq.Dir)
+	if *smoke {
+		return nil
+	}
 	fmt.Fprintf(os.Stdout, "ffmpeg -framerate %d -i %s -c:v libx264 -pix_fmt yuv420p demo.mp4\n",
 		seq.FPS, filepath.Join(seq.Dir, seq.Pattern))
 	return nil
