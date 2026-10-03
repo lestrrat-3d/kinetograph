@@ -80,15 +80,16 @@ jobs:
           go mod tidy
           git diff --exit-code go.mod go.sum
 
-  # The jobs above run ./..., which skips the _-prefixed clip modules. This job
-  # checks each clip module on its own: a root API change or a root dependency
-  # bump the clip's go.mod does not follow fails here. -smoke renders the first
-  # frame of every shot; -probe builds every reshape tuple the clip reaches.
+  # The jobs above run ./..., which skips the _-prefixed clip and gallery
+  # modules. This job checks each of them on its own: a root API change or a
+  # root dependency bump the module's go.mod does not follow fails here. -smoke
+  # renders the first frame of every shot; -probe builds every reshape tuple the
+  # landing clip reaches.
   clips:
     strategy:
       fail-fast: false
       matrix:
-        dir: [_clips/demo, _clips/decad-landing]
+        dir: [_clips/demo, _clips/decad-landing, _gallery]
     runs-on: ubuntu-latest
     defaults:
       run:

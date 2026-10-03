@@ -24,6 +24,10 @@ go.work.sum
 # Frames and videos the clip programs write
 _clips/*/out/
 
+# Frames and the ffmpeg script the gallery program writes
+_gallery/out/
+_gallery/assemble.sh
+
 # Scratch output and agent worktrees
 .tmp/
 .worktrees/

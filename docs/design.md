@@ -189,6 +189,10 @@ library.
 and a camera orbit: a drilled plate on `Fixed`, two pins that drop into its bolt holes on `Prismatic` joints, and a
 ring that rises on a `Prismatic` joint and turns half a turn on a `Revolute` joint under it.
 
+`_gallery/` is a third program of the same shape. It renders the PNG frames of every GIF in the README and prints
+the ffmpeg commands that encode them into `docs/images/`, because kinetograph has no video encoder (D7). Each GIF's
+scene ends in the pose it starts in, and its test checks that, so the GIF loops without a jump.
+
 ## 5. Public API
 
 Signatures are normative; doc comments on the implementation carry the detail. Every constructor validates what
@@ -627,7 +631,9 @@ the same limit for its bounds. Tests therefore never commit a PNG golden; §10 s
 | `_clips/demo/` | The demo clip program, its own module (D11): `parts.go` builds the bodies, `scene.go` the rig, channels and style, `main.go` the flags and the `Sequence` call. |
 | `docs/design.md` | This document. |
 | `_clips/decad-landing/` | The landing-page clip program, its own module (D11); §9 pass 4 lists its files. |
-| `.github/workflows/ci.yml` | golangci-lint v2.12.2 and `go vet`; `go test -race ./...` on ubuntu, `go test ./...` on macOS and Windows; `go mod tidy` diff; govulncheck. Copied from decad's with the shard matrix removed. The `clips` job checks each `_clips/*` module (§9 pass 4, CI). |
+| `_gallery/` | The README's GIF program, its own module (D11): `hero.go` and `features.go` build each GIF's scene and style, `parts.go` the bodies, `style.go` the palette, lights and table camera, `shots.go` the shot table and `-only`, `assemble.go` the ffmpeg script, `main.go` the flags and the `Sequence` calls. |
+| `docs/images/` | The README's GIFs, written by the `_gallery/` program's ffmpeg script. |
+| `.github/workflows/ci.yml` | golangci-lint v2.12.2 and `go vet`; `go test -race ./...` on ubuntu, `go test ./...` on macOS and Windows; `go mod tidy` diff; govulncheck. Copied from decad's with the shard matrix removed. The `clips` job checks each `_clips/*` module and `_gallery/` (§9 pass 4, CI). |
 | `.golangci.yml` | decad's house config, copied. |
 
 
@@ -1425,10 +1431,10 @@ clip module breaks without any change of its own in two ways: a root API change,
 second was checked: with `_clips/demo`'s `go.mod` requiring an older decad than the root does, `go build ./...`
 stops with `go: updates to go.mod needed`.
 
-The `clips` job in `.github/workflows/ci.yml` runs on ubuntu with a matrix over `_clips/demo` and
-`_clips/decad-landing`. In the module directory it runs `go mod tidy` with a diff check, `go vet ./...`,
+The `clips` job in `.github/workflows/ci.yml` runs on ubuntu with a matrix over `_clips/demo`,
+`_clips/decad-landing` and `_gallery`. In the module directory it runs `go mod tidy` with a diff check, `go vet ./...`,
 `go test ./...` and `go run . -smoke -out "$RUNNER_TEMP/frames"`; for `_clips/decad-landing` it also runs
-`go run . -probe`. `dependabot.yml` has a `gomod` entry for each clip directory beside the root's.
+`go run . -probe`. `dependabot.yml` has a `gomod` entry for each clip directory and `_gallery` beside the root's.
 
 - A pull request that breaks a clip fails this job. `-smoke` catches decad refusing a body a shot starts with,
   and `-probe` catches a refusal at any frame of a reshape ramp; a build alone catches neither.

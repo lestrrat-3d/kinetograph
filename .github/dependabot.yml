@@ -19,8 +19,8 @@ updates:
     schedule:
       interval: weekly
 
-  # Each clip program is its own module; the root entry does not see its
-  # go.mod.
+  # Each clip program and the gallery program is its own module; the root
+  # entry does not see its go.mod.
   - package-ecosystem: gomod
     directory: /_clips/demo
     schedule:
@@ -28,5 +28,10 @@ updates:
 
   - package-ecosystem: gomod
     directory: /_clips/decad-landing
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: gomod
+    directory: /_gallery
     schedule:
       interval: weekly
