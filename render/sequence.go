@@ -97,7 +97,9 @@ func foldSequenceOptions(opts []SequenceOption) sequenceConfig {
 // a failed or cancelled run leaves no partial frame file. Each frame is the
 // image Frame returns, fades and node lights included, encoded with
 // png.Encode; a frame with no fading part therefore holds the bytes
-// solidlens.RenderPNG writes for its one scene.
+// solidlens.RenderPNG writes for its one scene. A worker drawing a frame with
+// fading parts holds one float64 accumulator per image byte, 32 bytes per
+// pixel (about 66 MB at 1920x1080), plus two 4-byte-per-pixel layer images.
 //
 // The workers share one kinetograph.BuildCache and one mesh cache for this
 // call, so each parametric part is built once per distinct parameter tuple

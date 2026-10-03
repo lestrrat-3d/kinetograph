@@ -213,9 +213,12 @@ func (r *Renderer) plan(ctx context.Context, rn *run, i int) (*framePlan, error)
 			if err != nil {
 				return nil, fmt.Errorf("part %q fade: %w", part.name, err)
 			}
-			fade = min(max(fade, 0), 1)
+			fade = min(fade, 1)
 		}
-		if fade == 0 {
+		// !(fade > 0) also hides a NaN fade, which min and max would pass on.
+		// Channel.At refuses a non-finite value today; this keeps a NaN out
+		// of the composite if that ever changes.
+		if !(fade > 0) {
 			continue
 		}
 		tf := pose.Transform
@@ -246,7 +249,9 @@ func (r *Renderer) plan(ctx context.Context, rn *run, i int) (*framePlan, error)
 		if err != nil {
 			return nil, fmt.Errorf("light %q intensity: %w", light.name, err)
 		}
-		intensity = max(intensity, 0)
+		if !(intensity > 0) { // below 0, or NaN
+			intensity = 0
+		}
 		color := light.appearance.Color
 		if pose.Kind == kinetograph.PointLight {
 			points = append(points, solidlens.PointLight{Position: pose.Position, Color: color, Intensity: intensity})
