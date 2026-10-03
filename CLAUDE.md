@@ -38,8 +38,10 @@ are not built), §12 points at where each settled choice lives.
 ## Hard rules
 
 - **Layering is `render -> kinetograph -> decad -> r3 -> units`, with `render -> solidlens`.**
-  `render` is the ONLY package that imports solidlens. The root package never names a color,
-  a light or a pixel. NEVER import kinetograph from decad, solidlens, r3 or units; they do
+  `render` is the ONLY package that imports solidlens. The root package never names a color
+  or a pixel, and names a light only as a kind plus a node-local position or direction
+  (pass 3, `docs/design.md` §4 D6). Light color, light intensity and part fade are
+  `render.Style`'s. NEVER import kinetograph from decad, solidlens, r3 or units; they do
   not know it exists.
 - **Every animated quantity is a scalar channel.** A rotation is an axis plus an `Angle`
   channel through `r3.RotationAround`; a slide is a direction plus a `Length` channel through
