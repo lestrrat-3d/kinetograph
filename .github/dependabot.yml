@@ -27,11 +27,6 @@ updates:
       interval: weekly
 
   - package-ecosystem: gomod
-    directory: /_clips/decad-landing
-    schedule:
-      interval: weekly
-
-  - package-ecosystem: gomod
     directory: /_gallery
     schedule:
       interval: weekly

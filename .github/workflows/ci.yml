@@ -83,13 +83,12 @@ jobs:
   # The jobs above run ./..., which skips the _-prefixed clip and gallery
   # modules. This job checks each of them on its own: a root API change or a
   # root dependency bump the module's go.mod does not follow fails here. -smoke
-  # renders the first frame of every shot; -probe builds every reshape tuple the
-  # landing clip reaches.
+  # renders the first frame of every shot.
   clips:
     strategy:
       fail-fast: false
       matrix:
-        dir: [_clips/demo, _clips/decad-landing, _gallery]
+        dir: [_clips/demo, _gallery]
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -117,10 +116,6 @@ jobs:
 
       - name: Render the first frame of every shot
         run: go run . -smoke -out "$RUNNER_TEMP/frames"
-
-      - name: Build every reshape tuple
-        if: matrix.dir == '_clips/decad-landing'
-        run: go run . -probe
 
   # Scan the module and its dependencies for known vulnerabilities.
   govulncheck:
