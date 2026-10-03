@@ -657,7 +657,7 @@ Why each piece is out:
   adds them.
 - Vector channels: a moving camera target is a camera on a moving node (D5), so no `r3.Vec` is ever interpolated
   in pass 1.
-- The clip program: its content is not decided, and it is its own module (D11).
+- The clip program: it is its own module (D11), and pass 4 below states its content.
 
 ### Pass 2, reshape
 
@@ -976,6 +976,329 @@ A nested module `_clips/decad-landing/` with its own `go.mod`, modeled on decad'
 the style, and the ffmpeg invocation in its `main.go` doc comment. It joins neither the library's module nor its
 tests (D11).
 
+The clip shows a visitor to decad's README what decad builds, in three acts: one part built feature by feature
+and then checked for fit, a row of the other shapes decad makes, and the DECAD wordmark. Every body is built by
+decad inside the program with the same constructions decad's `_gallery` uses for the README images
+(`_gallery/features.go`, `_gallery/hero.go`), so the clip and the README table show the same parts. The program
+uses kinetograph's public API only. kinetograph gains no type for shots, scripts or transitions: those live in
+the clip module.
+
+#### Format
+
+| Property | Value |
+|---|---|
+| Length | 24.0 s: 720 frames at 30 fps |
+| Frame | 1280×720 (16:9; both even, as `yuv420p` needs) |
+| MP4 | H.264, `yuv420p`, CRF 18, `+faststart` |
+| GIF | 800×450 at 15 fps, 128-colour palette. The demo clip's 4.5 s encode to 1.25 MB with the same command, so 24 s should land near 6–7 MB |
+| Palette and lights | `_gallery/scene.go`'s background, five part colours, two directional lights and one point light |
+| Chord | 0.05 mm, as the demo uses; 0.02 mm for the wordmark, as `_gallery/hero.go` uses |
+
+For scale, the demo clip at 1280×720 and 30 fps (135 frames) renders in 1.4 s wall time on a 24-thread machine,
+at most 90 ms of CPU per frame (the 1.4 s includes `go run`'s build step).
+
+#### Shots on one clock
+
+The whole clip is timed on one global clock from 0 to 24 s. A **shot** is a window `[From, To)` on that clock
+with its own `Scene`, rig, camera and `render.Style`; the program renders it as its own `Clip` of length
+`To − From` and its own `Sequence` call. The shot table is ordered, and the boundary between two consecutive
+shots follows from their windows:
+
+- `next.From == prev.To` is a cut.
+- `next.From < prev.To` is a dissolve of length `prev.To − next.From`. Both shots render the overlap, at the same
+  global times, and ffmpeg's `xfade` filter blends them.
+- `next.From > prev.To` is an error naming both shots.
+
+Every `From` and `To` is a multiple of 0.5 s. The program refuses an odd `-fps`, so every boundary falls on a
+whole frame and the frames of two overlapping shots line up.
+
+Separate scenes per shot, rather than one scene for the whole clip, are what let pass 1 show a body changing
+shape: two shots holding the before and after bodies dissolve into each other under the same camera. One scene
+would hold every body of the clip at once and render the ones off-camera on every frame.
+
+#### Storyboard
+
+Times are on the global clock. A track is a named channel of the script (below); `cam.orbit` is the camera's
+orbit angle, for example. "Pass 1" is what ships with pass 1 alone; the later columns of the dependency table
+say what each later pass replaces.
+
+| Beat | Global time | Feature shown | Bodies |
+|---|---|---|---|
+| A1 Extrude | 0.0–2.5 s | Extrude | flange blank: `_gallery`'s boolean plate before its cuts, a 96×68 mm rectangle on XY extruded 16 mm |
+| A2 Cut | 2.5–5.5 s | Union, Cut and Intersect | the blank, three drill tools, the drilled plate (bore r 18 mm at the centre, bolt holes r 7 mm at x = ±36 mm, one `decad.Cut` per hole) |
+| A3 Fillet | 5.5–8.0 s | Fillet | the drilled plate with its four upright edges filleted at 12 mm |
+| A4 Chamfer | 8.0–10.0 s | Cap-loop chamfer | the filleted plate with its top cap loop chamfered 2 mm |
+| A5 Verify | 10.0–13.0 s | Verify | the finished plate and `_gallery`'s verify pin (r 15 mm, 46 mm long) |
+| B Shapes | 12.5–20.0 s | Revolve, Sweep, Loft, free-form profile, Shell, surface result | six parts built as `_gallery/features.go` builds them |
+| C Wordmark | 19.5–24.0 s | Fillet, cap-loop chamfer, Shell, Revolve together | `_gallery/hero.go`'s shelled backing plate, five letters, peg and dome |
+
+**Act A, the build (0.0–13.0 s).** One flange plate, the part `_gallery`'s boolean image shows, is built one
+feature at a time. The plate is violet, the tools and the pin gold.
+
+- Camera: root → `Revolute` about Z through the origin (track `cam.orbit`, 0° at 0 s to 130° at 13.0 s, `Linear`)
+  → `Revolute` about the horizontal axis through the target that is perpendicular to the view (track `cam.tilt`).
+  The node-local camera is `_gallery/scene.go`'s: position (105, −165, 110), target (0, 0, 12), up +Z. Track
+  `cam.fov` holds 30° and narrows to 24° from 8.0 to 10.0 s (`EaseInOut`).
+- A1 Extrude. Pass 1: the finished blank rises into place from 60 mm below on a `Prismatic` +Z joint (track
+  `blank.rise`, 0 to 60 mm from 0.3 to 1.5 s, `EaseOut`). With pass 2: the blank is a parametric part whose
+  `height` parameter grows from 0.5 mm to 16 mm over the same span, so the part grows up out of its sketch
+  rectangle.
+- A2 Cut. Three drill tools start 60 mm above where they land and plunge on `Prismatic` −Z joints (tracks
+  `tool.bore.plunge`, `tool.left.plunge`, `tool.right.plunge`, 0 to 60 mm, starting 2.7, 2.85 and 3.0 s, each
+  0.8 s, `EaseIn`), hold, then retract up and out of frame from 4.1 to 5.0 s. Each tool is a cylinder 48 mm long,
+  0.3 mm larger in radius than its hole, centred on the plate's mid-plane when it has landed. At 3.9 s every tool
+  fills its hole, so the blank with the tools in it and the drilled plate with the tools in it draw the same
+  pixels: the tool's wall covers the hole's rim, and the 0.3 mm margin covers the difference between the two
+  tessellations of that circle. The blank is swapped for the drilled plate at that instant.
+  - Pass 1: both plates are parts of the shot. Each sits on a `Prismatic` "stash" joint that can park it 2 m
+    below the plate, about 58° off the view axis of this shot's camera and so outside its 30° field of view. The
+    drilled plate starts parked; at 3.9 s a step move on each stash track parks the blank and unparks the
+    drilled plate.
+  - With pass 2: the plate is the parametric part; its three hole-depth parameters step from 0 to "through" at
+    3.9 s. An opaque tool hides a growing hole completely, so pass 2 alone gains nothing visible here.
+  - With passes 2 and 3: the tools are drawn at 40 % opacity from 2.5 s and fade out while they retract, and each
+    hole-depth parameter follows its tool's tip: its move has the same start, end and easing as the tool's
+    plunge, so both channels evaluate the same eased `u`. The hole grows visibly through the ghosted tool.
+- A3 Fillet. Pass 1: a 0.5 s dissolve from 6.5 to 7.0 s between the drilled plate and the filleted plate, under
+  the continuing orbit. With pass 2: parameter `fillet` grows from 0 to 12 mm from 5.8 to 7.3 s (`EaseInOut`).
+  With pass 3: a point light on a `Revolute` node about Z sweeps past the nearest corner from 6.8 to 8.0 s, so a
+  highlight slides across the round.
+- A4 Chamfer. The camera narrows its field of view (`cam.fov`) to bring the top rim closer. Pass 1: a 0.5 s
+  dissolve from 8.5 to 9.0 s between the filleted plate and the chamfered plate. With pass 2: parameter `chamfer`
+  grows from 0 to 2 mm from 8.2 to 9.2 s.
+- A5 Verify. The pin hangs 80 mm above the bore and lowers on a `Prismatic` −Z joint (track `pin.drop`, 10.2 to
+  11.6 s, `EaseOut`) until it stands in the bore from the plate's bottom face up, 3 mm clear of the bore wall all
+  round. `cam.tilt` raises the camera 40° toward overhead from 11.0 to 12.8 s (`EaseInOut`), so the clearance ring
+  shows as a gap of background between gold and violet. Pass 1 alone renders this beat in full.
+
+**Act B, the shapes (12.5–20.0 s).** A dissolve from 12.5 to 13.0 s brings in a shelf of six parts, in this
+order: the revolved ring (blue), the swept duct (cyan), the lofted transition duct (violet), the free-form blade
+(coral), the shelled tray (blue) and the surface-result dish (violet outside, gold inside, through
+`Appearance.Back`).
+
+- Rig: each part hangs off root → `Fixed` translation to its shelf slot, x = 75 + 120·k mm for k = 0…5 →
+  `Revolute` about Z through the slot (track `shape.<name>.spin`, a full turn from 12.5 to 20.0 s, `Linear`), so
+  each part turns in place while the camera passes.
+- Camera: root → `Prismatic` +X (track `shapes.dolly`, 0 to 750 mm from 12.5 to 20.0 s, `Linear`, so 100 mm/s).
+  The node-local camera is `_gallery/scene.go`'s, target (0, 0, 12). The camera passes one part every 1.2 s and
+  centres part k at 13.25 + 1.2·k s.
+- The swept duct is drawn as `_gallery` draws it: the program builds the real `Sweep` over the three-span path to
+  prove the path, and renders the two `Revolve` spans and the `Extrude` span that occupy the same space. decad
+  cannot tessellate a `Sweep` body (`tessellation does not support payload decad.sweepPayload`).
+- Pass 1: the finished parts turn on the shelf. With pass 2, each part grows by one parameter in the 0.6 s before
+  the camera centres it: the ring's revolve angle from 10° to a full turn; the duct span by span (first arc
+  angle, straight length, second arc angle, in sequence); the loft's top-plane offset from 12 to 46 mm; the
+  blade's middle fit point from y = −14 to −24 mm and back; the tray's wall from 20 to 7 mm; the dish's revolve
+  angle from 10° to 150°. None of these parameter ranges is probed yet (see "decad constraints" below).
+
+**Act C, the wordmark (19.5–24.0 s).** A dissolve from 19.5 to 20.0 s brings in `_gallery/hero.go`'s masthead:
+the shelled backing plate, the filleted and cap-chamfered letters D, E, C, A, D, the extruded peg and the revolved
+dome.
+
+- Rig: the plate, peg and dome are still. Each letter sits 150 mm in front of its place on a `Fixed` joint and
+  slides back into the plate on a `Prismatic` +Y joint (track `word.<i>.in`, 0 to 150 mm over 0.9 s,
+  `EaseOut`), the five letters starting at 19.8, 19.95, 20.1, 20.25 and 20.4 s.
+- Camera: the hero image's camera (position (18, −360, 68), target (0, 0, 4), FOV 30°) on a `Prismatic` joint
+  along its view direction (track `word.dolly`, from 120 mm closer to the hero framing, 19.5 to 22.0 s,
+  `EaseInOut`). It holds from 22.0 to 24.0 s, so a looping GIF rests on the name before it restarts.
+- Pass 1 renders this act in full with the hero's static point light. With pass 3: a point light on a
+  `Prismatic` +X node sweeps across the letters from 22.0 to 23.5 s.
+
+**Pass dependencies.**
+
+| Beat | Pass 1 (ships first) | Pass 2 adds | Pass 3 adds |
+|---|---|---|---|
+| A1 Extrude | blank rises into place | the blank grows from its sketch | — |
+| A2 Cut | tools plunge; swap hidden inside the tools | nothing visible alone | ghosted tools; hole grows through them (needs pass 2) |
+| A3 Fillet | dissolve between two shots | the radius grows | moving highlight across the round |
+| A4 Chamfer | dissolve between two shots | the setback grows | — |
+| A5 Verify | complete | — | — |
+| B Shapes | finished parts turning on the shelf | each part grows as the camera reaches it | — |
+| C Wordmark | complete, static lights | — | light sweep across the letters |
+
+**Shot windows.**
+
+| Realisation | Shots |
+|---|---|
+| Pass 1 | `drill` [0.0, 7.0) · `fillet` [6.5, 9.0) · `verify` [8.5, 13.0) · `shapes` [12.5, 20.0) · `wordmark` [19.5, 24.0) |
+| Pass 2 and later | `build` [0.0, 13.0) · `shapes` [12.5, 20.0) · `wordmark` [19.5, 24.0) |
+
+With pass 2, act A is one shot: the flange is one parametric part whose `Builder` takes `height`, the three hole
+depths, `fillet` and `chamfer`, and applies each feature only when its parameter is above zero: a zero radius,
+setback or depth means the feature is not there yet, and the `Builder` never asks decad for it. The module carries
+one realisation at a time; landing pass 2 replaces the pass-1 shots of act A rather than adding a mode.
+
+#### decad constraints
+
+These hold at the decad version the demo pins (`v0.0.0-20260930143515-7dde3ae229fd`), measured with a scratch
+program building `_gallery`'s plate at chord 0.05 mm with `VerifyNone`. Times are wall time for one build plus
+tessellation, single-threaded.
+
+| Chain | Result |
+|---|---|
+| Extrude → Cut ×3 → Fillet 12 mm → cap-loop chamfer 2 mm | builds and tessellates, 878 triangles, 97 ms |
+| Extrude → Fillet 12 mm → Cut ×3 | builds and tessellates, 37 ms |
+| Extrude → Fillet 12 mm → cap-loop chamfer → Cut | refused: `a cap-loop chamfer's mesh carries no proof of the volume it and the body it stands for differ by, so no boolean may compose it` |
+| Blind hole r 18 mm, depth 0.5, 4, 8 or 12 mm | builds and tessellates, about 90 ms each |
+| Spatial `Sweep` | builds; `Tessellate` refuses the payload |
+| `Revolve` with `AngleExtent` 90° | builds and tessellates |
+
+So the cap-loop chamfer is the last operation of act A, and the pass-2 `Builder` applies features in the order
+extrude, cut, fillet, chamfer. A cut tool whose end cap lies in a plate face is refused, as the demo and
+`_gallery` note, so the hole-depth parameter jumps from a blind depth below 15 mm straight to a through tool that
+clears both faces. Pass 2's act A rebuilds about 150 distinct parameter tuples; at the times above that is under
+10 s of CPU per render. Act B's pass-2 parameter ranges are not probed; each must build at every value it passes
+through before its shot is written.
+
+#### The script
+
+Timing lives in one data value, separate from the rig that consumes it:
+
+```go
+// Track is one named scalar the clip animates: a joint's angle or slide, a field of view, a reshape
+// parameter (pass 2), an opacity (pass 3).
+type Track struct {
+    Name    string
+    Initial units.Value
+}
+
+// Move changes one track: the track holds its value until Start, then eases to To and reaches it at End.
+type Move struct {
+    Track      string
+    Start, End time.Duration // global clock
+    To         units.Value
+    Ease       kinetograph.Easing
+}
+
+// Script is every track and move of the clip.
+type Script struct {
+    Tracks []Track
+    Moves  []Move
+}
+
+// Channels converts the script to one kinetograph.Channel per track, shifted so that global time from is
+// local time 0. A shot's Build looks its tracks up by name.
+func (s Script) Channels(from time.Duration) (*Channels, error)
+func (c *Channels) Get(track string) (*kinetograph.Channel, error)
+```
+
+`Channels` builds each track's keyframes from the moves on that track, in `Start` order:
+
+1. The first keyframe is `{0, Initial}`.
+2. For each move, a hold keyframe `{Start, current value}` is added when `Start` is later than the last keyframe,
+   then `{End, To, Ease}`. A move with `End == Start` is a step and gets `End = Start + 1ns`. No frame time lies
+   strictly between those two keyframes, so a step shows on the first frame after `Start`.
+3. A move whose `Start` is earlier than the end of the track's previous move, a negative `Start`, `End < Start`,
+   a `Move.Track` that names no track, and two tracks of one name are errors that name the track and the moves.
+   A `To` of another kind than `Initial` is the `kinetograph.ErrKind` that `NewChannel` returns.
+4. Keyframes before `from` are dropped and the rest move to `At − from`. When `from` falls strictly inside a
+   segment, a keyframe `{0, v}` is added, with `v` the unshifted channel's value at `from`, and the segment's end
+   keyframe takes the remainder of the original easing: `E'(u) = (E(u0 + u·(1 − u0)) − E(u0)) / (1 − E(u0))`,
+   with `u0` the position of `from` in the segment. `E'` is an `Easing` the clip module implements, so the shifted
+   channel equals the global one at every time up to float rounding; it adds one division to the multiplications
+   and subtractions §7 allows, and IEEE 754 rounds a division the same everywhere. When `E(u0)` is exactly 1 the
+   segment has already reached its end value, and the end keyframe takes `Linear` between two equal values. A
+   track with no keyframe at or after `from` is `kinetograph.Constant` of its value at `from`.
+
+Lookups by name are the only use of a map; channels, parts and the ffmpeg inputs are built in slice order (§7).
+The tests in `timeline_test.go` assert, for a script with a step, an eased move cut by a window and a held track,
+that `Channels(from)` gives each track a channel whose value at local time `t` equals the global channel's value
+at `from + t`, within 1e-9 of the base unit, at every frame time of the window; and that each error in step 3 is
+returned.
+
+The script is plain data so that a different producer can write it later. One option kept open, not built: draft
+the script as a [`github.com/lestrrat-go/fsm`](https://github.com/lestrrat-go/fsm) machine, run it once on a
+virtual clock, and have its host record a `Move` for each motion an action starts, at the clock's current time.
+fsm restricts action bodies to a small set of pure standard packages, so such a host would take numbers and an
+easing name and build the `units.Value` and `kinetograph.Easing` itself. The recorded `Script` would go through
+`Channels` unchanged. The module adds no fsm requirement now.
+
+`Script`, `Channels` and `Shot` stay in the clip module. Moving any of them into kinetograph would be a new public
+API and needs its own §5 entry first; a second clip program needing them is the reason to consider it.
+
+#### Module layout
+
+| Path | Owns |
+|---|---|
+| `go.mod` | module `github.com/lestrrat-3d/kinetograph/_clips/decad-landing`, `replace github.com/lestrrat-3d/kinetograph => ../..`; requires decad, sketch, solidlens, r3 and units |
+| `main.go` | package doc (what the clip shows, how to run it, the flags, both ffmpeg commands); flags; the loop that renders each shot with `render.WithPrefix(<shot>_)`; printing the commands |
+| `timeline.go` | `Track`, `Move`, `Script`, `Channels`, the remainder easing |
+| `timeline_test.go` | the conversion tests above |
+| `script.go` | `landingScript()`: every track and move of the clip. The only file that holds motion timing |
+| `shots.go` | `Shot{Name, From, To, Build}`, the ordered shot table, the cut/dissolve/gap rule, the frame-grid check |
+| `build.go` | act A: plate stages (pass 2: the flange `Builder`), drill tools, pin, and their rigs |
+| `shapes.go` | act B: the six bodies, after `_gallery/features.go`, and the shelf rig |
+| `wordmark.go` | act C: the masthead, copied from `_gallery/hero.go` and `_gallery/sketching.go` with the decad commit it was copied from in its doc comment, and the letter rig |
+| `parts.go` | sketch helpers the acts share: `polylineProfile`, `validProfile`, `rectangle`, `cylinder` |
+| `style.go` | the palette, the lights, and one `render.Style` per shot |
+| `assemble.go` | the ffmpeg command lines, built from the shot table, the frame rate and the output directory |
+| `assemble_test.go` | the filter graph for a table with a cut and two dissolves: input order, `xfade` offsets, `concat` for the cut |
+
+`_gallery` is `package main` in decad's repository, so the clip cannot import its builders; `shapes.go` and
+`wordmark.go` repeat them.
+
+#### Flags and output
+
+- `-out <dir>` is where the frames go (default `out`). Shot `s` writes `<dir>/s_000000.png`, `<dir>/s_000001.png`,
+  and so on.
+- `-width`, `-height` set the frame size (default 1280×720). The program refuses an odd value, because both
+  commands it prints use `yuv420p`.
+- `-fps` sets the frame rate (default 30) and must be even (see "Shots on one clock").
+- `-workers` sets `render.WithWorkers` (default: the CPU count).
+- `-only <names>` renders the named shots, comma separated, and prints no command, because the video needs
+  every shot.
+- `-smoke` renders the first frame of every shot at 160×90 and prints no command.
+
+Progress goes to stderr; stdout carries only the two ffmpeg commands, so `go run . > assemble.sh` writes a
+runnable script. For the pass-1 table the commands are:
+
+```
+ffmpeg -framerate 30 -i out/drill_%06d.png -framerate 30 -i out/fillet_%06d.png \
+  -framerate 30 -i out/verify_%06d.png -framerate 30 -i out/shapes_%06d.png \
+  -framerate 30 -i out/wordmark_%06d.png \
+  -filter_complex "[0][1]xfade=transition=fade:duration=0.5:offset=6.5[v1];\
+[v1][2]xfade=transition=fade:duration=0.5:offset=8.5[v2];\
+[v2][3]xfade=transition=fade:duration=0.5:offset=12.5[v3];\
+[v3][4]xfade=transition=fade:duration=0.5:offset=19.5,format=yuv420p[v]" \
+  -map "[v]" -c:v libx264 -crf 18 -preset slow -pix_fmt yuv420p -movflags +faststart out/decad-landing.mp4
+
+ffmpeg -i out/decad-landing.mp4 -vf "fps=15,scale=800:-1:flags=lanczos,split[a][b];\
+[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" \
+  -loop 0 out/decad-landing.gif
+```
+
+Each `xfade` offset is the next shot's `From` on the global clock, which is also the length of the video so far
+minus the dissolve. A cut joins two inputs with `concat=n=2:v=1:a=0` instead. Both commands were checked with
+ffmpeg 6.1 on the demo clip's frames: three 4.5 s inputs chained by two 0.5 s dissolves give a 12.5 s, 375-frame
+MP4.
+
+The PNG frames are the clip's deterministic output (§7); the MP4 and GIF bytes depend on the ffmpeg build and are
+not promised. The pass-4 change adds `_clips/*/out/` to `.gitignore` (the demo's `out/` is not ignored today).
+Neither video is committed to this repository. The GIF is what decad's README can show inline; GitHub does not
+play an MP4 committed to a repository inside a README.
+
+#### CI
+
+The root workflow runs `./...`, which skips `_`-prefixed directories, so no job builds `_clips/demo` today; decad's
+CI does the same for `_gallery`. A clip module breaks without any change of its own in two ways: a root API change
+(passes 2 and 3 change the API while the clips use it), and a root dependency bump. The second was checked: with
+`_clips/demo`'s `go.mod` requiring an older decad than the root does, `go build ./...` stops with
+`go: updates to go.mod needed`. Dependabot watches only the root `go.mod`, so its weekly decad bump would do this.
+
+Recommendation: one ubuntu job, `clips`, with a matrix over `_clips/demo` and `_clips/decad-landing`, running in
+the module directory `go mod tidy` with a diff check, `go vet ./...`, `go test ./...` and `go run . -smoke -out
+"$RUNNER_TEMP/frames"` (the demo gains the same `-smoke` flag). Add each clip directory to `dependabot.yml`'s
+`gomod` entries.
+
+- Gain: the pull request that breaks a clip fails, instead of the next person to run the clip finding it. The
+  smoke render also catches decad refusing a construction the clip uses, which a build alone cannot.
+- Cost: one more job per pull request. Its build compiles the same decad and solidlens the root jobs compile;
+  the smoke render is one 160×90 frame per shot plus one tessellation of every body. Its time is not measured
+  yet; the wordmark letters at 0.02 mm are the likely slowest part. A pull request that changes the root API must
+  also update both clips. Each clip's `go.mod` and `go.sum` take their own dependabot pull requests.
+- Alternative, build only (`go vet`, no smoke render): cheaper by the render time, and misses decad refusals.
+- Alternative, no CI, as decad does for `_gallery`: no cost, and a broken clip shows up only when someone runs it.
+
 ## 10. Test plan
 
 Every test asserts a computed result: a transform component, a `units.Value`, a pixel coordinate, a file count.
@@ -1084,6 +1407,7 @@ Every design choice is stated once, in the section that owns it. This section on
 | Choice | Owner |
 |---|---|
 | the landing-page clip is a `_clips/decad-landing/` nested module | §4 D11, §9 pass 4 |
+| the landing clip is one scene per shot on one global clock, and ffmpeg dissolves between shots | §9 pass 4 |
 | the camera is a rig attachment and there is no orbit-camera type | §4 D5 |
 | `sketch` is a test-and-example-only dependency | §4 D10 |
 | lights are static in pass 1 and move in pass 3 | §4 D6, §9 |
