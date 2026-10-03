@@ -93,8 +93,11 @@ names pass 4, the landing-page clip in `_clips/decad-landing/`, built with passe
     production code.
 - **Tooling lives in its own nested module.** The landing-page clip program (pass 4) is
   `_clips/decad-landing/` with its own `go.mod` and an `_` prefix, modeled on decad's
-  `_gallery/` (`docs/design.md` §4 D11). `_clips/demo/` is the demo clip, same shape. A clip
-  program NEVER joins the library's module.
+  `_gallery/` (`docs/design.md` §4 D11). `_clips/demo/` is the demo clip, same shape.
+  `_gallery/` is the README's GIF program, same shape: it renders the frames and prints the
+  ffmpeg commands that write `docs/images/*.gif`. A clip or gallery program NEVER joins the
+  library's module. A new nested module needs a CI `clips` matrix entry and a dependabot
+  `gomod` entry.
 - **The camera is a rig attachment** (`docs/design.md` §4 D5). An orbit is a revolute node
   about an axis through the target. NEVER add an orbit-camera type beside it.
 - **Correctness must be observable.** Every capability ships with a test asserting on a
