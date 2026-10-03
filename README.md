@@ -14,7 +14,9 @@ the PNGs.
 ## Why this exists
 
 The first clip kinetograph produces is a landing-page video for decad: decad parts turning, sliding apart and
-assembling, seen from a moving camera.
+assembling, seen from a moving camera. Its program is the `clip` subcommand of the `_gallery` module in
+[decad](https://github.com/lestrrat-3d/decad): `cd _gallery && go run . clip > assemble.sh && sh assemble.sh` in a
+decad checkout renders it.
 
 It also changes a body's shape over time. A parametric part rebuilds its decad body from parameters that change
 with the frame, so a block can grow wider across a clip.
@@ -47,11 +49,6 @@ fades a block in while a point light circles it. `go test ./examples/` runs all 
 [`_clips/demo/`](_clips/demo/main.go) renders a 4.5 s demo clip: two pins drop into a drilled plate, and a ring
 rises off it and turns half a turn while the camera orbits. `cd _clips/demo && go run . -out out` writes 108 frames
 at 960x720 into `out/`.
-
-[`_clips/decad-landing/`](_clips/decad-landing/main.go) renders decad's 24 s landing-page clip in three shots: a
-flange plate built feature by feature, a shelf of six decad parts, and the DECAD wordmark.
-`cd _clips/decad-landing && go run . > assemble.sh && sh assemble.sh` writes 750 frames at 1280x720 into `out/`,
-then `out/decad-landing.mp4` and `out/decad-landing.gif`.
 
 Assemble the frames into a video with ffmpeg:
 

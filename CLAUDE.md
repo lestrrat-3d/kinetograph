@@ -22,9 +22,11 @@ kinetograph writes no video.
 
 **Current state: pass 1 (the initial pass), pass 2 (reshape) and pass 3 (animated
 appearance) are implemented.** `docs/design.md` is the contract. §5.1–§5.6 there are the
-initial pass's public API, §5.7–§5.8 reshape's, §9 "Pass 3" animated appearance's. §9 also
-names pass 4, the landing-page clip in `_clips/decad-landing/`, built with passes 1, 2 and 3
-(act B uses pass 1 only), and §12 points at where each settled choice lives.
+initial pass's public API, §5.7–§5.8 reshape's, §9 "Pass 3" animated appearance's. §12
+points at where each settled choice lives. The nested program modules here are `_clips/demo/`
+(the demo clip) and `_gallery/` (the README's GIFs). decad's landing-page clip (pass 4) is the
+`clip` subcommand of decad's `_gallery/` module, which imports kinetograph (`docs/design.md`
+§9 "Pass 4").
 
 ## Read before you write
 
@@ -91,13 +93,13 @@ names pass 4, the landing-page clip in `_clips/decad-landing/`, built with passe
   - `github.com/lestrrat-go/option/v3` — functional options (house library).
   - `github.com/stretchr/testify/require` — assertions, **test code only**. NEVER import from
     production code.
-- **Tooling lives in its own nested module.** The landing-page clip program (pass 4) is
-  `_clips/decad-landing/` with its own `go.mod` and an `_` prefix, modeled on decad's
-  `_gallery/` (`docs/design.md` §4 D11). `_clips/demo/` is the demo clip, same shape.
-  `_gallery/` is the README's GIF program, same shape: it renders the frames and prints the
+- **Tooling lives in its own nested module.** The demo clip program is `_clips/demo/` with
+  its own `go.mod` and an `_` prefix, modeled on decad's `_gallery/` (`docs/design.md` §4
+  D11). `_gallery/` is the README's GIF program, same shape: it renders the frames and prints the
   ffmpeg commands that write `docs/images/*.gif`. A clip or gallery program NEVER joins the
   library's module. A new nested module needs a CI `clips` matrix entry and a dependabot
-  `gomod` entry.
+  `gomod` entry. decad's landing-page clip is the `clip` subcommand of decad's `_gallery/`,
+  not a module in this repository.
 - **The camera is a rig attachment** (`docs/design.md` §4 D5). An orbit is a revolute node
   about an axis through the target. NEVER add an orbit-camera type beside it.
 - **Correctness must be observable.** Every capability ships with a test asserting on a
