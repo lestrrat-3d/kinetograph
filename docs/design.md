@@ -150,8 +150,8 @@ because it is a property of one codec, but the README states it beside the comma
 
 ### D8. A failing frame stops the sequence
 
-A frame that cannot be evaluated or rendered — a channel arithmetic overflow, a camera whose up vector is parallel
-to its view direction at some time, a part whose rebuild fails (pass 2) — stops `Sequence` and returns a
+A frame that cannot be evaluated or rendered — a channel arithmetic overflow, a camera field of view that reaches
+solidlens's 179 degree limit at some time, a part whose rebuild fails (pass 2) — stops `Sequence` and returns a
 `*render.FrameError` carrying the frame index, the frame time and the wrapped cause. No frame is skipped and no
 later frame is written after the failing one is detected (§6).
 
@@ -412,7 +412,8 @@ cancelled or failed run leaves no partial frame file.
 
 ### 5.6 Executable example
 
-`examples/kinetograph_sequence_example_test.go` builds a decad block with `decadtest.NewBlock`, attaches it to a
+`examples/kinetograph_sequence_example_test.go` builds a decad block with `sketch` and `decad` directly (an `Example`
+has no `testing.TB`, which `decadtest.NewBlock` needs; tests use `decadtest.NewBlock`), attaches it to a
 revolute joint turning 90° over one second, puts the camera on a second revolute joint orbiting the origin, renders
 a 4-frame clip at 24 fps into a temporary directory, and prints the frame count, the file names and the sequence
 pattern as its `// Output:` block. It is the end-to-end instance the initial pass is accepted on.
@@ -587,8 +588,8 @@ Tests use `testify/require` in an external `_test` package with `t.Context()`, a
 | render | decad-posed reference (below) against kinetograph's vertex-transform path | centroids agree within 0.5 px; at least 99.5 % of pixels are identical |
 | render | render frame 7 twice in one process | byte-identical PNG encodings |
 | render | `Sequence` of a 6-frame clip with 1 and with 3 workers | 6 files named by `Pattern`, each file's bytes equal to `Frame(i)` encoded, `Sequence.Frames == 6` |
-| render | a camera whose up vector becomes parallel to its view direction at frame 4 | `Sequence` returns a `*FrameError` with `Index == 4`, `Time == FrameTime(4)`, files 0–3 present, no file 4 |
-| render | context cancelled after frame 2 | `ctx.Err()` returned unwrapped; no `.tmp` file left in `dir` |
+| render | a camera whose FOV channel is 179.5° at frame 4 only and 40° at every other frame | `Sequence` returns a `*FrameError` with `Index == 4`, `Time == FrameTime(4)`, files 0–3 present, no file 4 |
+| render | a context that reports cancelled once frame 2's file exists, one worker | `ctx.Err()` returned unwrapped; files 0–2 present, no other file, no `.tmp` file left in `dir` |
 | render | `Style` with an unknown part name, zero width, an Angle chord | `ErrStyle`, `ErrStyle`, `ErrKind` |
 | examples | `Example_kinetograph_sequence` | the `// Output:` block, verified by `go test ./examples/` |
 
@@ -613,6 +614,9 @@ simplify or speed up kinetograph without changing its behaviour; none is a block
 | solidlens | `Camera.FOV` as a `units.Value` | the `In(units.Degree)` conversion at the camera seam |
 
 `units` has no time dimension. D3 chooses `time.Duration` so that no `units` change is needed.
+
+decad cannot tessellate a `Document.Patch` sheet today (`unsupported payload patchPayload`), so a `Patch` body
+cannot be rendered. The sheet render test uses an open tube from `Extrude` with `decad.WithSurfaceResult()` instead.
 
 ## 12. Where each settled choice lives
 
