@@ -22,6 +22,15 @@
 // them; a Clip samples a Scene at a frame rate; Clip.Frame returns a Frame of
 // poses as r3.Transforms.
 //
+// # Reshape
+//
+// Scene.AddParametric attaches a part whose body a Builder builds from
+// Params: the values of named channels at the frame time. A BuildCache calls
+// Build once per distinct part and parameter tuple, keyed by each value's
+// units.Value.MarshalText in parameter-name order. Scene.At and Clip.Frame
+// use a new cache on every call; Scene.AtCached and Clip.FrameCached take
+// one, and render makes one per Frame or Sequence call.
+//
 // A rigid pose is applied to the tessellated vertices by the renderer, never
 // to the decad body (D2). Time is time.Duration and a frame rate is an int
 // number of frames per second (D3). Frame times are exact integer nanoseconds

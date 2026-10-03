@@ -95,6 +95,11 @@ func foldSequenceOptions(opts []SequenceOption) sequenceConfig {
 // temporary name in dir and renamed into place once the frame is complete, so
 // a failed or cancelled run leaves no partial frame file.
 //
+// The workers share one kinetograph.BuildCache and one mesh cache for this
+// call, so each parametric part is built once per distinct parameter tuple
+// and each rebuilt body is tessellated once, whatever the worker count. Both
+// caches hold every rebuilt body and mesh until Sequence returns.
+//
 // It returns kinetograph.ErrNilContext for a nil ctx, the *FrameError of the
 // lowest-index frame that failed, or ctx.Err() unchanged when ctx is done.
 // Frames below the failing index that finished keep their files.
@@ -108,6 +113,7 @@ func (r *Renderer) Sequence(ctx context.Context, dir string, opts ...SequenceOpt
 	}
 
 	count := r.clip.FrameCount()
+	rn := newRun()
 	var (
 		next    atomic.Int64
 		failed  atomic.Bool
@@ -135,7 +141,7 @@ func (r *Renderer) Sequence(ctx context.Context, dir string, opts ...SequenceOpt
 				if i >= count {
 					return
 				}
-				if err := r.writeFrame(ctx, dir, cfg.prefix, i); err != nil {
+				if err := r.writeFrame(ctx, rn, dir, cfg.prefix, i); err != nil {
 					if fe := (*FrameError)(nil); errors.As(err, &fe) {
 						record(fe)
 					}
@@ -162,8 +168,8 @@ func (r *Renderer) Sequence(ctx context.Context, dir string, opts ...SequenceOpt
 
 // writeFrame renders frame i to its file. It returns a *FrameError for any
 // failure that is not a cancelled ctx, and ctx.Err() for that one.
-func (r *Renderer) writeFrame(ctx context.Context, dir, prefix string, i int) error {
-	scene, err := r.scene(ctx, i)
+func (r *Renderer) writeFrame(ctx context.Context, rn *run, dir, prefix string, i int) error {
+	scene, err := r.scene(ctx, rn, i)
 	if err != nil {
 		return r.frameError(ctx, i, err)
 	}

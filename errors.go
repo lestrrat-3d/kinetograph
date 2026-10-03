@@ -37,8 +37,12 @@ var (
 	// the scene's, or is nil.
 	ErrForeignNode = errors.New("kinetograph: node belongs to another rig")
 
-	// ErrNilBody is returned by Scene.AddPart for a nil body.
+	// ErrNilBody is returned by Scene.AddPart for a nil body, and wrapped by
+	// Scene.At when a Builder returns a nil body and a nil error.
 	ErrNilBody = errors.New("kinetograph: nil body")
+
+	// ErrNilBuilder is returned by Scene.AddParametric for a nil Builder.
+	ErrNilBuilder = errors.New("kinetograph: nil builder")
 
 	// ErrNilChannel is returned for a nil channel where one is required.
 	ErrNilChannel = errors.New("kinetograph: nil channel")
