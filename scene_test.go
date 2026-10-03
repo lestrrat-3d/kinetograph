@@ -83,7 +83,9 @@ func TestSceneBuildErrors(t *testing.T) {
 	require.ErrorIs(t, scene.AddPart("a", nil, newBlock(t)), kinetograph.ErrForeignNode)
 
 	require.NoError(t, scene.AddPart("a", rig.Root(), newBlock(t)))
-	require.ErrorIs(t, scene.AddPart("a", rig.Root(), newBlock(t)), kinetograph.ErrDuplicateName)
+	err := scene.AddPart("a", rig.Root(), newBlock(t))
+	require.ErrorIs(t, err, kinetograph.ErrDuplicateName)
+	require.EqualError(t, err, `kinetograph: name already used: part "a"`)
 
 	require.ErrorIs(t, scene.SetCamera(other.Root(), defaultCamera()), kinetograph.ErrForeignNode)
 	noFOV := defaultCamera()

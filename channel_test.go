@@ -201,3 +201,27 @@ func TestEveryEasingFixesEndpoints(t *testing.T) {
 		require.Equal(t, 1.0, e.Ease(1), name)
 	}
 }
+
+func TestChannelKeyframes(t *testing.T) {
+	keys := []kinetograph.Keyframe{
+		{At: 0, Value: units.Scalar(0)},
+		{At: 300 * time.Millisecond, Value: units.Scalar(0.25)},
+		{At: time.Second, Value: units.Scalar(1), Ease: kinetograph.SmoothStep},
+	}
+	c := mustChannel(t, keys...)
+	got := c.Keyframes()
+	require.Equal(t, []kinetograph.Keyframe{
+		{At: 0, Value: units.Scalar(0), Ease: kinetograph.Linear},
+		{At: 300 * time.Millisecond, Value: units.Scalar(0.25), Ease: kinetograph.Linear},
+		{At: time.Second, Value: units.Scalar(1), Ease: kinetograph.SmoothStep},
+	}, got)
+
+	// The result is a copy: changing it leaves the channel alone.
+	got[1].Value = units.Scalar(0.9)
+	v, err := c.At(300 * time.Millisecond)
+	require.NoError(t, err)
+	require.True(t, v.Equal(units.Scalar(0.25), 0))
+
+	require.Equal(t, []kinetograph.Keyframe{{At: 0, Value: units.Degrees(40), Ease: kinetograph.Linear}},
+		kinetograph.Constant(units.Degrees(40)).Keyframes())
+}

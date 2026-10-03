@@ -25,13 +25,21 @@ var (
 	// not a rigid motion, the zero r3.Transform among them.
 	ErrInvalidTransform = errors.New("kinetograph: transform is not a rigid motion")
 
-	// ErrDegenerateDirection is returned by Node.Prismatic for a zero or
-	// non-finite direction.
+	// ErrDegenerateDirection is returned by Node.Prismatic, and by
+	// Scene.AddLight for a DirectionalLight, for a zero or non-finite
+	// direction.
 	ErrDegenerateDirection = errors.New("kinetograph: direction has no length")
 
-	// ErrDuplicateName is returned by Scene.AddPart for a part name already
-	// used in the scene.
-	ErrDuplicateName = errors.New("kinetograph: part name already used")
+	// ErrDuplicateName is returned by Scene.AddPart and Scene.AddParametric
+	// for a part name another part already uses, and by Scene.AddLight for a
+	// light name another light already uses. Parts and lights have separate
+	// names: a light may share a part's name.
+	ErrDuplicateName = errors.New("kinetograph: name already used")
+
+	// ErrInvalidLight is returned by Scene.AddLight for a Kind that is neither
+	// PointLight nor DirectionalLight, for a non-zero vector the Kind does not
+	// read, and for a non-finite PointLight Position.
+	ErrInvalidLight = errors.New("kinetograph: invalid light")
 
 	// ErrForeignNode is returned when a node belongs to a different rig than
 	// the scene's, or is nil.
