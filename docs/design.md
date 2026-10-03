@@ -425,6 +425,8 @@ type FrameError struct {
 }
 ```
 
+Pass 3 (§9) adds `Appearance.Fade`, `LightAppearance` and `Style.Lights`, and their checks in `New`.
+
 `Frame` builds a `solidlens.Scene` whose `Models` are in `Pose` order; each model's `Mesh` is a private
 `TriangleSource` holding the part's triangle indices and its vertices under `Pose.Transform.Apply`. The camera is
 `solidlens.Camera{Position, Target, Up, FOV: fov.In(units.Degree)}`.
@@ -545,16 +547,18 @@ message names the offending argument.
 | no keyframes | `ErrNoKeyframes` | `NewChannel` |
 | keyframe times not strictly increasing | `ErrKeyframeOrder` | `NewChannel` |
 | keyframes of two kinds; a channel of the wrong kind for its joint or the camera | `ErrKind` | `NewChannel`, `Revolute`, `Prismatic`, `SetCamera`, `render.New` (chord) |
+| pass 3: a light `Intensity` or a part `Fade` channel that is not `Dimensionless` | `ErrKind` | `render.New` |
 | non-finite keyframe value | `units.ErrNotFinite` (wrapped) | `NewChannel` |
-| interpolation overflows | `units.ErrNotFinite` (wrapped) | `Channel.At`, surfaced by `Node.World`, `Scene.At` |
+| interpolation overflows | `units.ErrNotFinite` (wrapped) | `Channel.At`, surfaced by `Node.World`, `Scene.At`; pass 3: an `Intensity` or `Fade` channel, surfaced as a `*render.FrameError` at that frame |
 | fixed transform is a reflection | `ErrReflection` | `Node.Fixed` |
 | fixed transform is not a rigid motion (`!IsValid()`) | `ErrInvalidTransform` | `Node.Fixed` |
 | zero or non-finite revolute axis | `r3.ErrDegenerateAxis` (passed through) | `Revolute` |
-| zero or non-finite prismatic direction | `ErrDegenerateDirection` | `Prismatic` |
+| zero or non-finite prismatic direction; pass 3: zero or non-finite directional light direction | `ErrDegenerateDirection` | `Prismatic`, `AddLight` |
+| pass 3: light kind neither `PointLight` nor `DirectionalLight`; a non-zero vector the kind does not read; a non-finite point light position | `ErrInvalidLight` | `AddLight` |
 | transform composition overflows | `r3.ErrNonFinite` / `r3.ErrNotOrthonormal` (passed through) | `Node.World`, surfaced by `Scene.At` |
-| part name already used | `ErrDuplicateName` | `AddPart`, `AddParametric` |
-| node belongs to another rig | `ErrForeignNode` | `AddPart`, `AddParametric`, `SetCamera` |
-| nil body, nil channel | `ErrNilBody`, `ErrNilChannel` | `AddPart`, `SetCamera`, `Revolute`, `Prismatic`, `AddParametric` (a nil parameter channel) |
+| part name already used; pass 3: light name already used by another light | `ErrDuplicateName` | `AddPart`, `AddParametric`, `AddLight` |
+| node belongs to another rig | `ErrForeignNode` | `AddPart`, `AddParametric`, `SetCamera`, `AddLight` |
+| nil body, nil channel | `ErrNilBody`, `ErrNilChannel` | `AddPart`, `SetCamera`, `Revolute`, `Prismatic`, `AddParametric` (a nil parameter channel); pass 3: `render.New` for a nil light `Intensity` |
 | nil builder | `ErrNilBuilder` | `AddParametric` |
 | parameter value with no text form | `units.ErrUnnamedKind` / `units.ErrOverflowedKind` (wrapped) | `AddParametric` (keyframe values), `Scene.At` (an evaluated value) |
 | `Build` fails | the `Builder`'s error, wrapped with the part name and time | `Scene.At`, `Scene.AtCached`, `Clip.Frame`, `Clip.FrameCached` |
@@ -564,7 +568,9 @@ message names the offending argument.
 | frame index outside the clip | `ErrFrameRange` | `Clip.Frame`, `Renderer.Frame` |
 | nil context | `ErrNilContext` | every function taking one, before any work |
 | style has a non-positive dimension or an unknown part name | `render.ErrStyle` | `render.New` |
+| pass 3: a scene light with no `Style.Lights` entry; a `Style.Lights` name no light carries; a light with the zero `Color`; an `Intensity` keyframe below 0; a `Fade` keyframe outside [0, 1] | `render.ErrStyle`, naming the light or part (`Default` for the default appearance) | `render.New` |
 | tessellation fails | decad's error, wrapped with the part name | `render.New`; for a rebuilt body, inside the frame's `FrameError` |
+| pass 3: a light's node cannot be posed at `t` | `r3` or `units` error, wrapped with the light name | `Scene.At`, `Scene.AtCached`, surfaced as a `*render.FrameError` |
 | anything at frame i (evaluation, `Build`, tessellation of a rebuilt body, solidlens refusal, file I/O) | `*render.FrameError{Index: i, Time: t_i, Err: cause}` | `Renderer.Frame`, `Renderer.Sequence` |
 | cancelled | `ctx.Err()` unchanged, never wrapped in a `FrameError` | everywhere |
 
@@ -603,7 +609,7 @@ the same limit for its bounds. Tests therefore never commit a PNG golden; §10 s
 | Path | Owns |
 |---|---|
 | `doc.go` | Package doc: scope, layering (`kinetograph -> decad, r3, units`; `render -> solidlens`), D1–D9 by name, and reshape (§5.7). Pass 3: the root package names a light only as a pose. |
-| `errors.go` | The sentinel vocabulary of §6. Pass 3 adds `ErrInvalidLight`. |
+| `errors.go` | The sentinel vocabulary of §6. Pass 3 adds `ErrInvalidLight` and widens `ErrDuplicateName` and `ErrDegenerateDirection` to `AddLight`. |
 | `channel.go` | `Easing` and the five provided easings, `Keyframe`, `Channel`, `NewChannel`, `Constant`. Pass 3 adds `Keyframes`. |
 | `rig.go` | `Rig`, `Node`, the three joint constructors, `Local`, `World`. |
 | `camera.go` | `Camera`, `CameraPose`, and the node-local to world evaluation. |
@@ -614,7 +620,7 @@ the same limit for its bounds. Tests therefore never commit a PNG golden; §10 s
 | `internal/memo/memo.go` | `memo.Map`: calls a function once per key, hands concurrent callers for that key the same result, and drops a result whose caller's ctx was done. Backs `BuildCache` and `render`'s mesh cache. |
 | `render/style.go` | `Appearance`, `Style`, `ErrStyle`, style validation. Pass 3 adds `Appearance.Fade`, `LightAppearance`, `Style.Lights` and their validation. |
 | `render/renderer.go` | `Renderer`, `New`, `Frame`; the posed `TriangleSource`; the per-call build and mesh caches; the solidlens scene assembly. Pass 3 adds the node lights, the fade and intensity evaluation and the hidden/opaque/fading grouping. |
-| `render/fade.go` (pass 3) | The layer scenes `B` and `A_k` and the byte mix of §9 pass 3. |
+| `render/fade.go` (pass 3) | The near-to-far order of fading parts, the layer scenes `S_j` and the composite of §9 pass 3. |
 | `render/sequence.go` | `Sequence`, `Renderer.Sequence`, `SequenceOption`, `FrameError`, atomic frame file writes. Pass 3 encodes the image `Frame` returns with `png.Encode`. |
 | `examples/` | `Example_kinetograph_*` with verified `// Output:` blocks. Never `package main`. |
 | `_clips/demo/` | The demo clip program, its own module (D11): `parts.go` builds the bodies, `scene.go` the rig, channels and style, `main.go` the flags and the `Sequence` call. |
@@ -647,7 +653,8 @@ Why each piece is in:
 Why each piece is out:
 
 - Reshape: the landing-page motions are rigid. Reshape is pass 2.
-- Animated lights: lights are static in `Style`; the clip does not need them to move.
+- Animated lights: in pass 1, lights are static in `Style`; the pass-1 clip does not need them to move. Pass 3
+  adds them.
 - Vector channels: a moving camera target is a camera on a moving node (D5), so no `r3.Vec` is ever interpolated
   in pass 1.
 - The clip program: its content is not decided, and it is its own module (D11).
@@ -680,7 +687,8 @@ color and its intensity over time, and a part's fade over time. `render` evaluat
 `Time`, so the root package still names no color and no pixel.
 
 solidlens cannot draw a translucent surface (§11), so a fade is not a material alpha. `render` draws a fading
-part by rendering the frame with and without it and mixing the two images.
+part by rendering the frame in layers, with and without each fading part, and mixing the layers from the farthest
+fading part to the nearest.
 
 #### Root package: lights on nodes
 
@@ -758,12 +766,13 @@ type Appearance struct {
 // LightAppearance is how one node light shines.
 type LightAppearance struct {
     // Color goes to solidlens unchanged. solidlens scales the light by the luminance of Color,
-    // 0.2126·R + 0.7152·G + 0.0722·B, and does not tint the surface (§11). The zero Color has luminance 0, so
-    // a light with it adds nothing.
+    // 0.2126·R + 0.7152·G + 0.0722·B, and does not tint the surface (§11). The zero Color is refused by New:
+    // its luminance is 0, so the light could never add anything, and a light is dimmed through Intensity.
     Color solidlens.Color
     // Intensity is solidlens's light Intensity over time, a Dimensionless channel whose keyframes are >= 0.
-    // A point light's contribution falls off as 1 / max(1, d²) with d in millimetres, so a point light 100 mm
-    // from a face needs an intensity near 10⁴ to light it as strongly as a directional light of intensity 1.
+    // A point light's contribution falls off as 1 / max(1, d²) with d in mesh units, which are millimetres in
+    // kinetograph, so a point light 100 mm from a face needs an intensity near 10⁴ to light it as strongly as a
+    // directional light of intensity 1.
     Intensity *kinetograph.Channel
 }
 
@@ -786,8 +795,9 @@ type Style struct {
 1. Every light in frame 0's `Lights` must have a `Style.Lights` entry, and every `Style.Lights` name must belong to
    a light; either failure is `ErrStyle` naming the light. Names are checked in sorted order, so the reported name
    does not depend on map order.
-2. Each `LightAppearance.Intensity`, in sorted light-name order: nil is `kinetograph.ErrNilChannel`, a kind other
-   than `units.Dimensionless` is `kinetograph.ErrKind`, and a keyframe below 0 is `ErrStyle`.
+2. Each `LightAppearance`, in sorted light-name order: a `Color` equal to `solidlens.Color{}` is `ErrStyle`; a nil
+   `Intensity` is `kinetograph.ErrNilChannel`, a kind other than `units.Dimensionless` is `kinetograph.ErrKind`,
+   and a keyframe below 0 is `ErrStyle`.
 3. `Default.Fade`, then each `Parts[name].Fade` in sorted name order: a kind other than `units.Dimensionless` is
    `kinetograph.ErrKind`, and a keyframe outside [0, 1] is `ErrStyle`. `Default.Fade` is checked even when every
    part has a `Parts` entry.
@@ -806,31 +816,54 @@ slices and never appends to the `Style`'s, because workers share the `Renderer`.
 
 `render` evaluates every part's fade at the frame's `Time` and sorts the parts into three groups: hidden (fade 0),
 opaque (fade 1, or no `Fade`) and fading (strictly between). It poses every non-hidden part's mesh once, as in pass
-1, and builds its solidlens scenes from those models:
+1. With no fading part, the frame is one `solidlens.Render` call over the opaque parts, and a `Style` with no
+`Fade` writes the same bytes as pass 1.
 
-- `B`: the opaque and fading parts.
-- `A_k`, one per fading part `k`: `B` without part `k`.
+With `n` fading parts, `render` orders them near to far. A part's sort key is the view depth of the centre of its
+posed vertices' axis-aligned bounds: `centre.Sub(camera.Position).Dot(forward)`, where `forward` is
+`camera.Target.Sub(camera.Position)` under `Vec.Normalize`. The nearest part is `1` and the farthest is `n`; equal
+keys keep `AddPart` order. The layer scenes reuse the posed meshes:
 
-With no fading part, the frame is `B` alone: one `solidlens.Render` call, and the same bytes as pass 1 when no
-`Fade` is set. With fading parts `k = 1 … n` in `AddPart` order and fades `f_k`, each byte of the result's `Pix`
-is
+- `S_j`, for `j = 1 … n`: the opaque parts and the fading parts `j … n`.
+- `S_{n+1}`: the opaque parts alone.
+
+The composite is built from the far end, pixel by pixel, with `f_j` the fade of part `j`:
 
 ```
-out = clamp(round(B + Σ_k (1 − f_k) · (A_k − B)), 0, 255)
+R_{n+1} = S_{n+1}
+R_j     = f_j · S_j + (1 − f_j) · R_{j+1}   where pixel S_j differs from pixel S_{j+1} in any of its four bytes
+R_j     = R_{j+1}                           everywhere else
+out     = clamp(round(R_1), 0, 255)
 ```
 
-summed in `AddPart` order, with round-half-up as solidlens's own edge blending does. A frame with `n` fading parts
-costs `n + 1` renders.
+A pixel where `S_j` and `S_{j+1}` agree is one where part `j` draws nothing visible. Mixing `S_j` in there would
+pull the pixel back to the unfaded scene behind it and undo the farther parts' fades, so the pixel keeps `R_{j+1}`.
+`R` is carried in `float64` from layer to layer and rounded half up once, at the end, as solidlens's own edge
+blending rounds.
 
-For one fading part this is `f · B + (1 − f) · A`: where the part is the nearest surface, `B` shows the part and
-`A` shows what is behind it; everywhere else `A` and `B` agree and the pixel is unchanged. The part's edge lines
-fade with it, and the edge lines of a part behind it show through, because both images carry their own edges. The
-mix is of the 8-bit sRGB values solidlens writes, not of linear light: a red part at fade 0.5 over a white
-background gives the bytes (255, 128, 128).
+For one fading part this is `f · S_1 + (1 − f) · S_2`: where the part is the nearest surface, `S_1` shows the part
+and `S_2` shows what is behind it. The part's edge lines fade with it, and the edge lines of a part behind it show
+through, because each layer carries its own edges. The mix is of the 8-bit sRGB values solidlens writes, not of
+linear light: a red part at fade 0.5 over a white background gives the bytes (255, 128, 128).
 
-Where two fading parts overlap on screen, the result is exact for the nearer one and draws the farther one opaque
-behind it: the pixel is `f_near · near + (1 − f_near) · far`, without the scene behind the farther part. Two fading
-parts that do not overlap are each exact. An exact result needs depth-sorted blending inside solidlens (§11).
+Where a fading part lies in front of another fading part, the farther part's own fade reaches the pixel through
+`R_{j+1}`, so the result changes continuously with every `f`: a farther part fading in from 0 changes the pixel by
+at most `ceil(255 · f)` per channel. The result is approximate in three places:
+
+- The order is per part, not per pixel. Parts that pass through each other, or a part whose bounds centre is
+  nearer although its surface is behind another part at some pixel, are layered in the wrong order there.
+- A part drawn in the same bytes as the layer behind it, at a pixel, counts as drawing nothing at that pixel, and
+  the farther parts' fades show there unmixed with it.
+- Where the edge lines of two fading parts cover the same pixel, solidlens has already blended each line by its
+  antialiasing coverage, and mixing those blended bytes is not the blend of the two partly covered lines.
+
+An exact result needs depth-sorted blending inside solidlens (§11).
+
+The layers are rendered one at a time, far to near (`S_{n+1}` first), on the goroutine that renders the frame;
+`Sequence` already renders several frames at once. `render` holds one `float64` accumulator for `R`, the previous
+layer's image and the current layer's image, so a frame's memory does not grow with `n`. A frame with `n` fading
+parts costs `n + 1` renders; pass 3 accepts that cost. `ctx` is checked before each layer, and a done `ctx` returns
+`ctx.Err()` unwrapped, as every other cancellation in §6 does.
 
 `Renderer.Frame` returns the composite. `Sequence` encodes the image `Frame` returns with `png.Encode`;
 `solidlens.RenderPNG` is `Render` followed by the same `png.Encode`, so a frame without a fading part writes the
@@ -848,18 +881,9 @@ frame, so a `Build` error fails the frame whatever the `Style` says, and the set
 
 #### Errors
 
-| Condition | Error | Where |
-|---|---|---|
-| light kind is neither `PointLight` nor `DirectionalLight`; the vector its kind does not read is non-zero; a non-finite point position | `ErrInvalidLight` | `AddLight` |
-| directional light direction is zero or non-finite | `ErrDegenerateDirection` | `AddLight` |
-| light name already used by another light | `ErrDuplicateName` | `AddLight` |
-| nil node, node of another rig | `ErrForeignNode` | `AddLight` |
-| the light's node cannot be posed at `t` | `r3` or `units` error, wrapped with the light name | `Scene.At`, surfaced as `*render.FrameError` |
-| a scene light with no `Style.Lights` entry; a `Style.Lights` name no light carries | `render.ErrStyle` | `render.New` |
-| nil `LightAppearance.Intensity` | `ErrNilChannel` | `render.New` |
-| `Intensity` or `Fade` channel not `Dimensionless` | `ErrKind` | `render.New` |
-| an `Intensity` keyframe below 0; a `Fade` keyframe outside [0, 1] | `render.ErrStyle`, naming the light or part (`Default` for the default appearance) | `render.New` |
-| `Intensity` or `Fade` interpolation overflows | `units.ErrNotFinite` (wrapped) | `*render.FrameError` at that frame |
+§6 lists pass 3's error conditions, marked "pass 3". Two existing sentinels widen: `ErrDuplicateName`'s message
+becomes "kinetograph: name already used" and its doc names `AddLight` beside `AddPart`, and
+`ErrDegenerateDirection`'s doc names `AddLight` beside `Node.Prismatic`.
 
 #### Determinism
 
@@ -869,7 +893,8 @@ frame, so a `Build` error fails the frame whatever the `Style` says, and the set
 |---|---|
 | Light poses are in `AddLight` order; solidlens lights are the `Style` lights, then the node lights in that order | solidlens sums light contributions in the order given |
 | `Style.Lights` and `Style.Parts` are looked up by name; validation walks their names in sorted order | the reported error does not depend on map order |
-| A fade's layers are mixed in `AddPart` order, and every product in the mix is wrapped in an explicit `float64(…)` conversion | the Go spec forbids fusing a product into an FMA across an explicit conversion, so the mix is the same on amd64 and arm64 for the same layer bytes |
+| Fading parts are layered by the view depth of their posed bounds centre, computed with `r3` (`Sub`, `Dot`, `Normalize`), ties broken by `AddPart` index | the layer order depends only on the frame's poses and camera |
+| Every product in the mix is wrapped in an explicit `float64(…)` conversion, and `R` is rounded once, at the end | the Go spec forbids fusing a product into an FMA across an explicit conversion, so the mix is the same on amd64 and arm64 for the same layer bytes |
 | The fade and intensity are clamped after evaluation, never before | the clamp sees the one value `Channel.At` computes |
 
 The layer images themselves keep §7's limit: a vertex can differ in its last bit between architectures.
@@ -889,16 +914,19 @@ The layer images themselves keep §7's limit: a vertex can differ in its last bi
 | light | kind 0; a point light with a non-zero `Direction`; a zero directional `Direction`; a repeated light name; a foreign node | `ErrInvalidLight`, `ErrInvalidLight`, `ErrDegenerateDirection`, `ErrDuplicateName`, `ErrForeignNode` |
 | channel | `Keyframes` on a three-key channel with one nil `Ease`; on `Constant` | the keys in order with `Linear` in place of nil; one key at time 0 |
 | render | the block's camera-facing face (`Ambient` 0, red), a white directional light travelling +Y with `Intensity` `Constant(0.5)` on a revolute node about Z, frames at 0° and 180° | the image-centre pixel equals `solidlens.RGB(0.5, 0, 0).NRGBA()` at 0° and is black at 180° |
-| render | the same light with `Intensity` ramping 0 → 1 over 1 s, frame 12 at 24 fps | the centre pixel equals `solidlens.RGB(0.5, 0, 0).NRGBA()` |
+| render | the same light with `Intensity` a `Linear` ramp from 0 to 1 over 1 s, in a 1 s clip at 24 fps, frame 12 (t = 0.5 s) | the centre pixel equals `solidlens.RGB(0.5, 0, 0).NRGBA()` |
 | render | a node point light against a `Style.PointLights` entry at the node light's world `Position` with the same color and intensity | the two frames are byte-identical PNG encodings; the same for a directional light |
 | render | a `Style` directional light of intensity 0.25 and a node light of 0.25 along the same direction | the centre pixel equals `solidlens.RGB(0.5, 0, 0).NRGBA()` |
-| render | a scene light missing from `Style.Lights`; an unknown `Style.Lights` name; nil `Intensity`; a Length `Intensity`; an `Intensity` keyframe of −1 | `ErrStyle`, `ErrStyle`, `ErrNilChannel`, `ErrKind`, `ErrStyle` |
+| render | a scene light missing from `Style.Lights`; an unknown `Style.Lights` name; the zero `Color`; nil `Intensity`; a Length `Intensity`; an `Intensity` keyframe of −1 | `ErrStyle`, `ErrStyle`, `ErrStyle`, `ErrNilChannel`, `ErrKind`, `ErrStyle` |
+| render | an `Intensity` from 0 to `math.MaxFloat64` over 1 s whose easing returns 2 at u = 0.5 and u elsewhere, in a 1 s clip at 24 fps | `Sequence` returns a `*FrameError` with `Index == 12` wrapping `units.ErrNotFinite`; files 0–11 present, no file 12 |
 | fade | `Fade` `Constant(0)` on the only part | no pixel differs from the background |
 | fade | `Fade` `Constant(1)` against no `Fade` | byte-identical PNG encodings |
-| fade | `Fade` `Constant(0.5)` on an edged block over the background | every byte of `Pix` equals `round(b + 0.5 · (a − b))` of the fade-1 image `a` and fade-0 image `b`, computed by the test from two other renderers |
-| fade | a red block at fade 0.5 in front of a larger opaque blue block | where they overlap the pixel is (128, 0, 128, 255): the blue part shows through |
-| fade | two fading blocks side by side, not overlapping, at 0.25 and 0.75 | each block's pixels equal its single-part fade formula |
-| fade | two fading blocks, one in front of the other | every byte equals `B + Σ (1 − f_k)(A_k − B)` from layer images the test renders itself; this pins the documented overlap result |
+| fade | `Fade` `Constant(0.5)` on an edged block over the background | every byte of `Pix` equals `round(b + 0.5 · (a − b))` where `a` and `b` differ and `b` elsewhere, with `a` the fade-1 image and `b` the fade-0 image, rendered by the test through two other renderers |
+| fade | flat materials (`Ambient` 1) and no lights: a red block at fade 0.5 in front of a larger opaque blue block | where they overlap the pixel is (128, 0, 128, 255): the blue part shows through |
+| fade | two fading blocks without edges side by side, not overlapping, at 0.25 and 0.75 | each block's interior pixels equal its single-part fade formula |
+| fade | a red block at fade 0.5 in front of a fading blue block, frames with the blue fade at 0, 0.001, 0.999 and 1 | at an overlap pixel, the 0.001 frame is within 1 of the 0 frame and the 0.999 frame within 1 of the 1 frame on every channel; the 1 frame shows (128, 0, 128, 255) |
+| fade | the same two blocks with the red fade at 0, 0.001, 0.999 and 1 and the blue at 0.5 | the same continuity at an overlap pixel |
+| fade | the two overlapping fading blocks added in near-then-far and in far-then-near `AddPart` order | byte-identical frames |
 | fade | a custom easing that returns 1.5 at u = 0.5 on a 0 → 1 fade, at that frame | byte-identical to the frame with no `Fade` (clamped to 1) |
 | fade | an Angle `Fade`; a keyframe of 1.5 on `Default.Fade`; −0.1 on a `Parts` fade | `ErrKind`, `ErrStyle` naming `Default`, `ErrStyle` naming the part |
 | fade | render a frame with a part at fade 0.5 twice; `Sequence` of 6 frames with 1 and 3 workers | byte-identical encodings; the files of both runs are equal |
@@ -916,8 +944,9 @@ sequence pattern.
 - A light is a node attachment, as the camera is (D5). A moving light is a light on a moving node, so no position
   or direction is interpolated (D1).
 - A light's intensity is a `Dimensionless` channel, so a light that brightens or dims needs no other type.
-- A fade mixes layer renders. It needs no solidlens change, a test can recompute its result from images it
-  renders itself, and it is exact for one fading part and for several that do not overlap on screen.
+- A fade mixes layer renders. It needs no solidlens change, a single fading part's result can be recomputed by a
+  test from two images it renders itself, and the result changes continuously with every fade, including where
+  fading parts overlap.
 - An animated light color is out. solidlens reads only a light color's luminance (§11), so an animated color
   would draw the same pixels as an animated intensity.
 - Animated material colors and an animated background are out. Pass 3 does not specify them, and adding one
@@ -1010,7 +1039,7 @@ Pass 3 meets three limits in solidlens. They were read from the pinned solidlens
   alpha included, over the pixel and writes the depth buffer. It does not sort triangles or blend with what is
   already drawn. A red square at alpha 0.5 in front of a blue one writes the pixel (128, 0, 0, 128): the blue
   is gone and the PNG pixel itself is half transparent. A fade by material alpha would therefore punch a hole in
-  the image rather than show the scene behind the part, so pass 3 mixes two renders instead.
+  the image rather than show the scene behind the part, so pass 3 mixes layer renders instead.
 - **Light color does not tint.** solidlens multiplies a light's intensity by the luminance of its `Color`
   (0.2126·R + 0.7152·G + 0.0722·B) and shades the material color with that one number. A red light at intensity
   1 on a white surface draws grey (127, 127, 127). Pass 3 therefore does not animate light color.
@@ -1022,7 +1051,7 @@ Two solidlens additions would let pass 3 do less work or be exact:
 
 | Module | Addition | What it would replace |
 |---|---|---|
-| solidlens | a per-`Model` opacity: opaque models drawn first, then translucent triangles sorted far to near, blended without writing depth, with their edge lines blended at the same opacity | the `n + 1` renders and the byte mix per fading frame; the result would also be exact where two fading parts overlap |
+| solidlens | a per-`Model` opacity: opaque models drawn first, then translucent triangles sorted far to near, blended without writing depth, with their edge lines blended at the same opacity | the `n + 1` renders and the composite per fading frame; the blend order would be per triangle rather than per part |
 | solidlens | shading each color channel by the light's matching channel | nothing in pass 3; an animated light color would become meaningful |
 
 `units` has no time dimension. D3 chooses `time.Duration` so that no `units` change is needed.
