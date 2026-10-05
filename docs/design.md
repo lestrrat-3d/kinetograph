@@ -5,14 +5,14 @@ the animation to a numbered PNG with [solidlens](https://github.com/lestrrat-3d/
 ffmpeg assembles the PNGs into a clip; kinetograph writes no video itself.
 
 This document is the contract the implementation is built from. §5 states the public API as Go signatures: §5.1 to
-§5.6 are the initial pass, §5.7 and §5.8 are pass 2 (reshape). §9 states which pass adds what. A later pass extends
-this document before it extends the code.
+§5.6 are the initial pass, §5.7 and §5.8 are pass 2 (reshape), and §5.2's `TransformTrack` and `Node.Driven` are
+pass 5 (driven nodes). §9 states which pass adds what. A later pass extends this document before it extends the code.
 
 ## 1. What kinetograph is
 
 A caller describes a scene in Go: decad bodies attached to a tree of joints, one camera attached to the same tree,
 and scalar channels (an angle, a slide distance, a field of view) that change with time through keyframes and
-easing. kinetograph evaluates the scene at each frame time, poses every body and the camera with `r3`, and hands
+easing. A joint can also take its transform at each time from the caller (a driven node, D12). kinetograph evaluates the scene at each frame time, poses every body and the camera with `r3`, and hands
 the posed triangles to solidlens.
 
 Its first use is decad's landing-page clip: decad parts turning, sliding apart, assembling and being built feature
@@ -49,7 +49,7 @@ The four layers the design work agreed on survive, with one refinement each.
 
 | Layer | Owns | Refinement |
 |---|---|---|
-| Timeline | `Channel`: keyframes of one `units.Kind`, easing between them, `At(t)` | Every animated quantity is a scalar channel (D1); a camera orbit or dolly is a joint (D5) |
+| Timeline | `Channel`: keyframes of one `units.Kind`, easing between them, `At(t)` | Every quantity kinetograph interpolates is a scalar channel (D1); a driven node's transform comes from the caller (D12); a camera orbit or dolly is a joint (D5) |
 | Rig | `Rig`/`Node`: a joint tree; a joint value becomes an `r3.Transform`, composed with the parent's | Bodies AND the camera attach to nodes; the tree is built parent to child, so no cycle can be written |
 | Reshape | a body as a Go function of parameters, rebuilt when they change, cached by parameter values | pass 2 (§5.7): a cache lives in one render call, never in the `Renderer`; a failed rebuild stops the sequence (§6) |
 | Output | `render`: one solidlens scene per frame, one PNG per frame | a rigid pose is applied to the tessellated vertices, never by re-placing the decad body (D2) |
@@ -58,9 +58,10 @@ Evaluation of one frame runs top to bottom:
 
 1. `Clip.FrameTime(i)` gives the frame's time `t` as an exact `time.Duration` (§7).
 2. Every `Channel` the rig reads evaluates `At(t)`: find the keyframe segment, map `t` to `u` in `[0, 1]`, ease
-   `u`, and interpolate the two keyframe values with `units.Value` arithmetic.
-3. Every `Node` builds its local transform from its channel value with `r3.RotationAround` or `r3.Translation`,
-   and composes it with its parent's world transform with `Transform.Then`.
+   `u`, and interpolate the two keyframe values with `units.Value` arithmetic. Every `TransformTrack` the rig reads
+   returns its transform for `t` (D12).
+3. Every `Node` builds its local transform from its channel value with `r3.RotationAround` or `r3.Translation`, or
+   takes a driven node's from its track, and composes it with its parent's world transform with `Transform.Then`.
 4. `Scene.At` collects one `Pose` per part (its body and its node's world transform) and the camera's world
    position, target, up and field of view into a `Frame`. For a parametric part (§5.7) it first evaluates the
    part's parameter channels at `t` and takes the body from the part's `Builder`, through a `BuildCache` that
@@ -72,7 +73,7 @@ Evaluation of one frame runs top to bottom:
 
 ## 4. Decisions
 
-### D1. Every animated quantity is a scalar channel; rotations come from an axis and an angle
+### D1. Every quantity kinetograph interpolates is a scalar channel; rotations come from an axis and an angle
 
 A `Channel` holds keyframes of one `units.Kind`. A revolute joint reads an `Angle` channel and builds its transform
 with `r3.RotationAround(center, axis, angle)`; a prismatic joint reads a `Length` channel and builds
@@ -81,6 +82,9 @@ orientation is ever interpolated: there is no quaternion, no slerp and no rotati
 
 What this gives up: a body that tumbles about a changing axis needs two or more revolute joints in a chain, one per
 axis. That is how a real mechanism moves.
+
+A driven node (D12) is the one animated quantity that is not a channel. kinetograph interpolates nothing for it: the
+caller supplies the transform at every time.
 
 `r3` has every operation this needs: `RotationAround`, `Translation`, `Then`, `Apply`, `ApplyDir`,
 `Vec.Normalize`, `Vec.Scale`. §11 records what would be convenient but is not needed.
@@ -104,7 +108,8 @@ change. Each body its `Builder` returns is tessellated once in the render call t
 pose then moves that mesh's vertices the same way.
 
 A reflection (`Transform.IsReflection()`) would turn every triangle inside out. `Node.Fixed` refuses one with
-`ErrReflection`; a revolute or prismatic joint cannot produce one.
+`ErrReflection`, and `Node.Local` refuses one a driven node's track returns (D12); a revolute or prismatic joint
+cannot produce one.
 
 ### D3. Time is `time.Duration`; a frame rate is an integer frames per second
 
@@ -215,6 +220,29 @@ beside the root's.
   take their own dependabot pull requests.
 - On a GitHub ubuntu runner the job takes about 26 s for `_clips/demo`, build steps included.
 
+### D12. A driven node draws the transform its caller supplies
+
+`Node.Driven(track)` adds a node whose local transform at `t` is `track.At(t)`. kinetograph calls `At` at every
+time it evaluates the node and uses the result as given: it never interpolates between two results, never holds a
+result for a later time, and keeps no result. The node is for poses no scalar channel describes, such as the
+certified poses decad's `dynamics.Timeline` returns: a pose blended between two certified poses has no certificate
+behind it (decad `docs/multibody-dynamics-design.md` §11).
+
+- `Local` checks every result as `Fixed` checks its argument: `!IsValid()` is `ErrInvalidTransform` and
+  `IsReflection()` is `ErrReflection`, each naming `t`. D2's rule that no joint produces a reflection therefore
+  holds for a driven node.
+- An error from `At` fails the frame at that time, wrapped with the time by `Local` and with the part, camera or
+  light name by `Scene.At` (§6). kinetograph never draws another pose in place of a failed one.
+- `At` MUST return the same transform for the same `t`, and MUST be safe to call from several goroutines at once.
+  `Scene.At` calls it once for each part, the camera and each light whose node is the driven node or lies under
+  it, so one frame can ask for one `t` several times; `Sequence` workers evaluate frames concurrently; a caller
+  may evaluate a frame before rendering it. D9 holds only under this contract.
+- kinetograph caches no `At` result, within a frame or across frames. A track whose `At` is costly caches on its
+  own side.
+
+`TransformTrack` is kinetograph's type. kinetograph imports no decad package that exists only for dynamics, and
+decad's `_gallery` adapts a `dynamics.Timeline` to the interface; `r3.Transform` is the one type the two share.
+
 ## 5. Public API
 
 Signatures are normative; doc comments on the implementation carry the detail. Every constructor validates what
@@ -292,7 +320,19 @@ func (n *Node) Revolute(center, axis r3.Vec, angle *Channel) (*Node, error)
 // distance.Kind() == units.Length, and ErrDegenerateDirection when dir has no direction.
 func (n *Node) Prismatic(dir r3.Vec, distance *Channel) (*Node, error)
 
-// Local returns the joint's own transform at t.
+// TransformTrack supplies a driven node's local transform at a time (pass 5, D12). At MUST return the same
+// transform for the same t, and MUST be safe to call from several goroutines at once.
+type TransformTrack interface {
+    // At returns the transform at t. kinetograph uses the result as the node's Local(t); it never blends two
+    // results.
+    At(t time.Duration) (r3.Transform, error)
+}
+
+// Driven adds a child whose Local(t) is track.At(t) (pass 5, D12). It returns ErrNilTrack for a nil track.
+func (n *Node) Driven(track TransformTrack) (*Node, error)
+
+// Local returns the joint's own transform at t. For a driven node it returns At's error wrapped with t,
+// ErrInvalidTransform when the result is not a rigid motion, and ErrReflection when it mirrors.
 func (n *Node) Local(t time.Duration) (r3.Transform, error)
 
 // World returns the transform from this node's frame to the world frame at t: Local(t).Then(parent.World(t)),
@@ -577,8 +617,10 @@ message names the offending argument.
 | pass 3: a light `Intensity` or a part `Fade` channel that is not `Dimensionless` | `ErrKind` | `render.New` |
 | non-finite keyframe value | `units.ErrNotFinite` (wrapped) | `NewChannel` |
 | interpolation overflows | `units.ErrNotFinite` (wrapped) | `Channel.At`, surfaced by `Node.World`, `Scene.At`; pass 3: an `Intensity` or `Fade` channel, surfaced as a `*render.FrameError` at that frame |
-| fixed transform is a reflection | `ErrReflection` | `Node.Fixed` |
-| fixed transform is not a rigid motion (`!IsValid()`) | `ErrInvalidTransform` | `Node.Fixed` |
+| fixed transform is a reflection; pass 5: a driven node's track returns one | `ErrReflection` | `Node.Fixed`; pass 5: `Node.Local` (wrapped with the time), surfaced by `Node.World`, `Scene.At` |
+| fixed transform is not a rigid motion (`!IsValid()`); pass 5: a driven node's track returns one | `ErrInvalidTransform` | `Node.Fixed`; pass 5: `Node.Local` (wrapped with the time), surfaced by `Node.World`, `Scene.At` |
+| pass 5: a driven node's `TransformTrack.At` fails | the track's error, wrapped with the time by `Node.Local` and with the part, camera or light name by `Scene.At` | `Node.Local`, `Node.World`, `Scene.At`, `Scene.AtCached`, `Clip.Frame`, `Clip.FrameCached`, surfaced as a `*render.FrameError` |
+| pass 5: nil track | `ErrNilTrack` | `Node.Driven` |
 | zero or non-finite revolute axis | `r3.ErrDegenerateAxis` (passed through) | `Revolute` |
 | zero or non-finite prismatic direction; pass 3: zero or non-finite directional light direction | `ErrDegenerateDirection` | `Prismatic`, `AddLight` |
 | pass 3: light kind neither `PointLight` nor `DirectionalLight`; a non-zero vector the kind does not read; a non-finite point light position | `ErrInvalidLight` | `AddLight` |
@@ -618,6 +660,7 @@ The claim: the same scene, style and clip produce byte-identical PNG files on th
 | Easings use multiplication and subtraction only, no `math.Pow` | identical results everywhere `float64` is IEEE |
 | Interpolation is `units.Value` arithmetic | `units` rounds once and canonicalises zero |
 | Transforms are `r3` constructors and `Then`; vertices are `Apply` | `r3` sums in a fixed order |
+| A driven node's `TransformTrack.At` returns the same transform for the same `t` (D12); kinetograph passes `FrameTime(i)` to it unchanged | how often, and on which goroutine, `At` is called cannot reach the bytes |
 | Each part `AddPart` attached is tessellated once, in `render.New`; each rebuilt body once per render call; decad promises equal vertex and index order for equal payload, tolerance and level (`docs/tessellation-design.md` §1, Determinism row) | a part's base mesh changes only when its parameter tuple does |
 | A parametric part's cache key is each parameter's `Value.MarshalText()` in name order; the names are sorted once with `slices.Sorted` in `AddParametric` | which body a frame gets never depends on map order |
 | `Build` runs once per distinct tuple per `BuildCache`, and a `Builder` returns equal bodies for equal `Params` (§5.7) | which worker built a body cannot reach the bytes |
@@ -635,10 +678,10 @@ the same limit for its bounds. Tests therefore never commit a PNG golden; §10 s
 
 | Path | Owns |
 |---|---|
-| `doc.go` | Package doc: scope, layering (`kinetograph -> decad, r3, units`; `render -> solidlens`), D1–D9 by name, and reshape (§5.7). Pass 3: the root package names a light only as a pose. |
-| `errors.go` | The sentinel vocabulary of §6. Pass 3 adds `ErrInvalidLight` and widens `ErrDuplicateName` and `ErrDegenerateDirection` to `AddLight`. |
+| `doc.go` | Package doc: scope, layering (`kinetograph -> decad, r3, units`; `render -> solidlens`), D1–D9 by name, and reshape (§5.7). Pass 3: the root package names a light only as a pose. Pass 5: a driven node (D12). |
+| `errors.go` | The sentinel vocabulary of §6. Pass 3 adds `ErrInvalidLight` and widens `ErrDuplicateName` and `ErrDegenerateDirection` to `AddLight`. Pass 5 adds `ErrNilTrack` and widens `ErrReflection` and `ErrInvalidTransform` to a driven node's `Local`. |
 | `channel.go` | `Easing` and the five provided easings, `Keyframe`, `Channel`, `NewChannel`, `Constant`. Pass 3 adds `Keyframes`. |
-| `rig.go` | `Rig`, `Node`, the three joint constructors, `Local`, `World`. |
+| `rig.go` | `Rig`, `Node`, the three joint constructors, `Local`, `World`. Pass 5 adds `TransformTrack` and `Driven`. |
 | `camera.go` | `Camera`, `CameraPose`, and the node-local to world evaluation. |
 | `light.go` (pass 3) | `LightKind`, `Light`, `LightPose`, and the node-local to world evaluation. |
 | `scene.go` | `Scene`, `Pose`, `Frame`, `PartInfo`, `AddPart`, `SetCamera`, `Parts`, `At`, `AtCached`. Pass 3 adds `AddLight`, `LightInfo`, `Lights` and `Frame.Lights`. |
@@ -1012,6 +1055,45 @@ them is the reason to consider it.
 
 §11 lists the solidlens and decad limits a kinetograph caller meets, the clip's among them.
 
+### Pass 5, driven nodes
+
+Pass 5 adds `TransformTrack` and `Node.Driven` (§5.2, D12) and the sentinel `ErrNilTrack`. It changes no earlier
+signature. Its first user is decad's `_gallery` module, which films the certified poses of a `dynamics.Timeline`: one
+driven node per body under the root, each with a track that samples the timeline at the frame time.
+
+A driven node is a fourth joint kind beside `Fixed`, `Revolute` and `Prismatic`, and nothing else changes:
+
+- `World` composes `Local(t).Then(parent.World(t))` as for every joint, so a driven node may sit under any node and
+  any node may sit under it.
+- Parts, the camera and lights pose through `Node.World`, so a driven node moves any of them with no scene change.
+- `render` never reads a node's kind, and moves the tessellated vertices with `Transform.Apply` (D2), so a driven pose
+  reaches the pixels as a revolute pose does.
+
+A track that fails at a frame time fails that frame (§6). `Sequence` returns the `*FrameError` of the lowest failing
+frame, as D8 says. With several workers, a frame after the failing one may already be in flight and be written, so a
+track that should stop the render at its end MUST fail at every time from its end on, as a timeline that has ended
+does. Then no later frame can render.
+
+The acceptance instance is `examples/kinetograph_driven_example_test.go`: a block on a driven node whose track
+computes a hop from `t` and refuses any time from 1 s on, rendered as a 4-frame clip at 4 fps. It prints each frame's
+translation, shows that the scene fails at 1 s, and prints the file names.
+
+Why each piece is in:
+
+- `TransformTrack` as an interface: the caller holds the state that computes a pose (a timeline, a recording), and
+  kinetograph holds only the track.
+- The check of every `At` result: a track can return a reflection or a non-rigid transform, and `Fixed` already
+  refuses both.
+- `ErrNilTrack`: no existing sentinel names a track, and `ErrNilChannel` would name an argument the caller never
+  passed.
+
+Why each piece is out:
+
+- A cache of `At` results inside one evaluation: a frame with several attachments on one driven node calls `At`
+  once for each. decad's gallery puts one part on each driven node, and a track can cache on its own side.
+- A vector or transform channel: a driven node interpolates nothing, so D1 stays the rule for every quantity
+  kinetograph interpolates.
+
 ## 10. Test plan
 
 Every test asserts a computed result: a transform component, a `units.Value`, a pixel coordinate, a file count.
@@ -1065,6 +1147,17 @@ Tests use `testify/require` in an external `_test` package with `t.Context()`, a
 | render | `Style.Parts` naming a parametric part | accepted; that part draws in its own colour |
 | examples | `Example_kinetograph_sequence` | the `// Output:` block, verified by `go test ./examples/` |
 | examples | `Example_kinetograph_reshape` | the `// Output:` block, verified by `go test ./examples/` |
+| driven | a driven node under the root, track keyed at 0, 250 ms and 500 ms with three rotation-plus-translation transforms | `Local(t)` and `World(t)` equal each table transform with `Equal(..., 0)`; a time between entries is asked of the track and fails |
+| driven | a `Fixed` child and a `Revolute` child under a driven node, and a driven node under a `Prismatic` node | `World(t)` equals `child.Local(t).Then(parent.World(t))` computed independently with `r3`, within 1e-12 |
+| driven | `Driven(nil)`; a track returning `Transform{}`; a track returning a reflection; a failing track | `ErrNilTrack`; `ErrInvalidTransform` and `ErrReflection` from `Local(t)` and from a child's `World(t)`, each message naming `t`; the track's error from `Local` and `World` |
+| driven | a 6-frame clip at 24 fps with a part on a driven node whose track records every `t` | every recorded `t` is some `FrameTime(i)`; each `Pose.Transform` equals the table entry with `Equal(..., 0)` |
+| driven | a track failing with a sentinel at `FrameTime(3)` only, under a part, the camera and a light | `Clip.Frame(2)` and `Frame(4)` succeed; `Frame(3)` fails, `errors.Is` reaches the sentinel and the message names the part, camera or light and 125ms |
+| driven | a track that cancels ctx and then fails | `Scene.AtCached` returns `ctx.Err()` unwrapped |
+| driven | `Sequence` of 6 frames whose track fails from frame 3 on, with 1 and with 3 workers | `*render.FrameError` with `Index == 3` and `Time == FrameTime(3)`, `errors.Is` reaches the sentinel; exactly files 0–2 |
+| driven | a block on a driven node whose track returns `T`, against the same block on `Fixed(T)` | the two PNG encodings of frame 0 are byte-identical |
+| driven | a block on a driven node translating 12 mm along +X between frames 0 and 5 | the blob centroid's x increases by at least 2 px, y unchanged within 1 px |
+| driven | `Sequence` of a driven clip with 1 and with 3 workers, under `go test -race` in CI | the files are byte-identical between the two runs, and the six frames differ |
+| examples | `Example_kinetograph_driven` | the `// Output:` block, verified by `go test ./examples/` |
 
 The blob-centroid assertions read what the renderer drew rather than re-deriving solidlens's projection, so a
 change to solidlens's camera model fails them without kinetograph having copied that model.
@@ -1158,6 +1251,9 @@ Every design choice is stated once, in the section that owns it. This section on
 | decad's landing-page clip is the `clip` subcommand of decad's `_gallery/` module | §4 D11, §9 pass 4 |
 | kinetograph has no shot, script or transition type | §9 pass 4 |
 | the camera is a rig attachment and there is no orbit-camera type | §4 D5 |
+| every quantity kinetograph interpolates is a scalar channel | §4 D1 |
+| a driven node draws its caller's transform, checked and never interpolated or cached | §4 D12, §9 pass 5 |
+| kinetograph never imports decad's dynamics code; decad's `_gallery` adapts a timeline to `TransformTrack` | §4 D12 |
 | `sketch` is a test-and-example-only dependency | §4 D10 |
 | lights are static in pass 1 and move in pass 3 | §4 D6, §9 |
 | a light's color and intensity, and a part's fade, are `render.Style` channels bound by name | §4 D6, §9 pass 3 |

@@ -15,13 +15,20 @@
 //
 // A Channel is a scalar function of time built from keyframes of one
 // units.Kind with easing between them (D1, D3, D4). A Rig is a tree of Node
-// joints: Fixed, Revolute (an axis through a center and an Angle channel) and
-// Prismatic (a direction and a Length channel). A node's world transform is
-// its own local transform composed with its parent's (D1). Parts (decad
-// bodies) and one Camera attach to nodes of the same rig (D5), so a camera
-// orbit is a revolute node and a dolly is a prismatic one. A Scene collects
-// them; a Clip samples a Scene at a frame rate; Clip.Frame returns a Frame of
-// poses as r3.Transforms.
+// joints: Fixed, Revolute (an axis through a center and an Angle channel),
+// Prismatic (a direction and a Length channel) and Driven (a TransformTrack
+// the caller supplies). A node's world transform is its own local transform
+// composed with its parent's (D1). Parts (decad bodies) and one Camera attach
+// to nodes of the same rig (D5), so a camera orbit is a revolute node and a
+// dolly is a prismatic one. A Scene collects them; a Clip samples a Scene at a
+// frame rate; Clip.Frame returns a Frame of poses as r3.Transforms.
+//
+// A driven node's local transform at t is the transform its track returns for
+// t (D12). kinetograph asks the track at every time it evaluates the node,
+// never interpolates between two results and keeps none. The track must return
+// the same transform for the same t and be safe to call from several
+// goroutines at once. A track error, or a result that is a reflection or not a
+// rigid motion, fails the frame at t.
 //
 // # Lights and fades
 //

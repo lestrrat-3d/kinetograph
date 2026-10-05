@@ -9,8 +9,9 @@ Update when a design decision gets resolved.
 every frame to a numbered PNG with `solidlens`. A video tool (ffmpeg) assembles the PNGs;
 kinetograph writes no video.
 
-- Timeline: every animated quantity is a scalar `Channel` of `units.Value` keyframes with
-  easing.
+- Timeline: every quantity kinetograph interpolates is a scalar `Channel` of `units.Value`
+  keyframes with easing. A driven node (`Node.Driven`) takes its transform at each time from
+  a caller's `TransformTrack` and interpolates nothing.
 - Rig: joints form a tree. A joint value becomes an `r3.Transform`; a child's world
   transform is its own composed with its parent's. Bodies AND the camera attach to nodes.
 - Reshape: a `Builder` makes a part's body from channel values (`Params`); a `BuildCache`
@@ -20,9 +21,10 @@ kinetograph writes no video.
   the frame in layers and mixing them far to near (`render/fade.go`).
 - Output: `render` builds one solidlens scene per frame and writes one PNG per frame.
 
-**Current state: pass 1 (the initial pass), pass 2 (reshape) and pass 3 (animated
-appearance) are implemented.** `docs/design.md` is the contract. §5.1–§5.6 there are the
-initial pass's public API, §5.7–§5.8 reshape's, §9 "Pass 3" animated appearance's. §12
+**Current state: pass 1 (the initial pass), pass 2 (reshape), pass 3 (animated
+appearance) and pass 5 (driven nodes) are implemented.** `docs/design.md` is the contract.
+§5.1–§5.6 there are the initial pass's public API, §5.7–§5.8 reshape's, §9 "Pass 3"
+animated appearance's, §5.2's `TransformTrack`/`Driven` and §9 "Pass 5" driven nodes'. §12
 points at where each settled choice lives. The nested program modules here are `_clips/demo/`
 (the demo clip) and `_gallery/` (the README's GIFs). decad's landing-page clip (pass 4) is the
 `clip` subcommand of decad's `_gallery/` module, which imports kinetograph (`docs/design.md`
@@ -33,9 +35,9 @@ points at where each settled choice lives. The nested program modules here are `
 | Before writing | Read |
 |---|---|
 | Any file | `docs/design.md` §8 (package layout: one row per file) |
-| Any public type or function | `docs/design.md` §4 (decisions D1–D11), §5 (API), §6 (errors) |
+| Any public type or function | `docs/design.md` §4 (decisions D1–D12), §5 (API), §6 (errors) |
 | Channel, easing or interpolation code | `docs/design.md` §5.1, §7 |
-| Rig, joint or camera code | `docs/design.md` §4 D1, D2, D5, §5.2, §5.3 |
+| Rig, joint or camera code | `docs/design.md` §4 D1, D2, D5, D12, §5.2, §5.3 |
 | Anything under `render/` | `docs/design.md` §5.5, §6, §7; decad's `_gallery/` (the reference use of solidlens) |
 | Reshape code (`reshape.go`, `internal/memo/`, render's per-call caches) | `docs/design.md` §5.7, §7 |
 | Light or fade code (`light.go`, `render/fade.go`, `render/style.go`) | `docs/design.md` §4 D6, §9 pass 3, §11 |
@@ -50,10 +52,15 @@ points at where each settled choice lives. The nested program modules here are `
   (pass 3, `docs/design.md` §4 D6). Light color, light intensity and part fade are
   `render.Style`'s. NEVER import kinetograph from decad, solidlens, r3 or units; they do
   not know it exists.
-- **Every animated quantity is a scalar channel.** A rotation is an axis plus an `Angle`
-  channel through `r3.RotationAround`; a slide is a direction plus a `Length` channel through
-  `r3.Translation`. NEVER interpolate an orientation: no quaternion, no slerp, no rotation
-  matrix blend. A tumbling body is a chain of revolute joints.
+- **Every quantity kinetograph interpolates is a scalar channel.** A rotation is an axis plus
+  an `Angle` channel through `r3.RotationAround`; a slide is a direction plus a `Length`
+  channel through `r3.Translation`. NEVER interpolate an orientation: no quaternion, no slerp,
+  no rotation matrix blend. A tumbling body is a chain of revolute joints.
+- **A driven node draws exactly what its `TransformTrack` returns** (`docs/design.md` §4 D12).
+  `Local(t)` calls `track.At(t)` on every evaluation and checks the result like `Fixed`
+  (`ErrInvalidTransform`, `ErrReflection`). NEVER interpolate, hold or cache an `At` result
+  across times, and NEVER substitute another pose for a failed one → the error fails the
+  frame. NEVER import decad's `dynamics` package; decad's `_gallery` adapts its timeline.
 - **A rigid pose moves the tessellated vertices, never the decad body.** Tessellate each part
   once per `(body, chord)` with `decad.WithVerification(decad.VerifyNone)`; per frame apply
   the node's world transform with `r3.Transform.Apply`. NEVER call `Body.Placed` or

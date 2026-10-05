@@ -18,11 +18,13 @@ var (
 	// expected and a Length given, or the reverse.
 	ErrKind = errors.New("kinetograph: wrong quantity kind")
 
-	// ErrReflection is returned by Node.Fixed for a transform that mirrors.
+	// ErrReflection is returned by Node.Fixed for a transform that mirrors,
+	// and wrapped by Node.Local when a driven node's track returns one.
 	ErrReflection = errors.New("kinetograph: transform is a reflection")
 
 	// ErrInvalidTransform is returned by Node.Fixed for a transform that is
-	// not a rigid motion, the zero r3.Transform among them.
+	// not a rigid motion, the zero r3.Transform among them, and wrapped by
+	// Node.Local when a driven node's track returns one.
 	ErrInvalidTransform = errors.New("kinetograph: transform is not a rigid motion")
 
 	// ErrDegenerateDirection is returned by Node.Prismatic, and by
@@ -54,6 +56,9 @@ var (
 
 	// ErrNilChannel is returned for a nil channel where one is required.
 	ErrNilChannel = errors.New("kinetograph: nil channel")
+
+	// ErrNilTrack is returned by Node.Driven for a nil TransformTrack.
+	ErrNilTrack = errors.New("kinetograph: nil track")
 
 	// ErrNoCamera is returned when a scene without a camera is evaluated.
 	ErrNoCamera = errors.New("kinetograph: scene has no camera")

@@ -2,6 +2,7 @@ package kinetograph_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -137,4 +138,131 @@ func TestSceneAtContext(t *testing.T) {
 	stop()
 	_, err = scene.At(cancelled, 0)
 	require.Equal(t, cancelled.Err(), err)
+}
+
+// errTimelineStopped is the sentinel a failing test track returns.
+var errTimelineStopped = errors.New("timeline stopped")
+
+// drivenClipTrack holds a distinct pose for each frame time of a 6-frame clip
+// at 24 fps, and fails with errTimelineStopped at fail.
+func drivenClipTrack(t *testing.T, fail ...int) *tableTrack {
+	t.Helper()
+	track := &tableTrack{poses: map[time.Duration]r3.Transform{}, fail: map[time.Duration]error{}}
+	for i := range 6 {
+		at := time.Duration(i) * time.Second / 24
+		track.poses[at] = turnAndShift(t, r3.Vec{X: 1}, r3.Vec{X: 1, Y: 2, Z: 3}, 17*float64(i), r3.Vec{X: float64(i), Z: -2 * float64(i)})
+	}
+	for _, i := range fail {
+		track.fail[time.Duration(i)*time.Second/24] = errTimelineStopped
+	}
+	return track
+}
+
+func TestDrivenPartPosesAtFrameTimes(t *testing.T) {
+	track := drivenClipTrack(t)
+	rig := kinetograph.NewRig()
+	n, err := rig.Root().Driven(track)
+	require.NoError(t, err)
+	scene := kinetograph.NewScene(rig)
+	require.NoError(t, scene.AddPart("body", n, newBlock(t)))
+	require.NoError(t, scene.SetCamera(rig.Root(), defaultCamera()))
+	clip, err := kinetograph.NewClip(scene, 24, 250*time.Millisecond)
+	require.NoError(t, err)
+	require.Equal(t, 6, clip.FrameCount())
+
+	frameTimes := map[time.Duration]struct{}{}
+	for i := range clip.FrameCount() {
+		frameTimes[clip.FrameTime(i)] = struct{}{}
+		f, err := clip.Frame(t.Context(), i)
+		require.NoError(t, err)
+		require.True(t, f.Poses[0].Transform.Equal(track.poses[clip.FrameTime(i)], 0), "frame %d", i)
+	}
+	asked := track.times()
+	require.NotEmpty(t, asked)
+	for _, at := range asked {
+		require.Contains(t, frameTimes, at, "the track was asked for %s, which is no frame time", at)
+	}
+}
+
+func TestDrivenNodeFailureFailsFrame(t *testing.T) {
+	// FrameTime(3) of a 24 fps clip is 125 ms.
+	for _, tc := range []struct {
+		name   string
+		attach func(scene *kinetograph.Scene, root, driven *kinetograph.Node) error
+		want   string
+	}{
+		{
+			name: "part",
+			attach: func(scene *kinetograph.Scene, root, driven *kinetograph.Node) error {
+				if err := scene.AddPart("body", driven, newBlock(t)); err != nil {
+					return err
+				}
+				return scene.SetCamera(root, defaultCamera())
+			},
+			want: `kinetograph: part "body" at 125ms`,
+		},
+		{
+			name: "camera",
+			attach: func(scene *kinetograph.Scene, root, driven *kinetograph.Node) error {
+				if err := scene.AddPart("body", root, newBlock(t)); err != nil {
+					return err
+				}
+				return scene.SetCamera(driven, defaultCamera())
+			},
+			want: "kinetograph: camera at 125ms",
+		},
+		{
+			name: "light",
+			attach: func(scene *kinetograph.Scene, root, driven *kinetograph.Node) error {
+				if err := scene.AddPart("body", root, newBlock(t)); err != nil {
+					return err
+				}
+				if err := scene.SetCamera(root, defaultCamera()); err != nil {
+					return err
+				}
+				return scene.AddLight("lamp", driven, kinetograph.Light{Kind: kinetograph.PointLight, Position: r3.Vec{Z: 40}})
+			},
+			want: `kinetograph: light "lamp" at 125ms`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := kinetograph.NewRig()
+			n, err := rig.Root().Driven(drivenClipTrack(t, 3))
+			require.NoError(t, err)
+			scene := kinetograph.NewScene(rig)
+			require.NoError(t, tc.attach(scene, rig.Root(), n))
+			clip, err := kinetograph.NewClip(scene, 24, 250*time.Millisecond)
+			require.NoError(t, err)
+
+			_, err = clip.Frame(t.Context(), 2)
+			require.NoError(t, err)
+			_, err = clip.Frame(t.Context(), 3)
+			require.ErrorIs(t, err, errTimelineStopped)
+			require.ErrorContains(t, err, tc.want)
+			_, err = clip.Frame(t.Context(), 4)
+			require.NoError(t, err)
+		})
+	}
+}
+
+// cancellingTrack cancels its context and then fails.
+type cancellingTrack struct{ cancel context.CancelFunc }
+
+func (c cancellingTrack) At(time.Duration) (r3.Transform, error) {
+	c.cancel()
+	return r3.Transform{}, errTimelineStopped
+}
+
+func TestDrivenNodeFailureUnderCancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	rig := kinetograph.NewRig()
+	n, err := rig.Root().Driven(cancellingTrack{cancel: cancel})
+	require.NoError(t, err)
+	scene := kinetograph.NewScene(rig)
+	require.NoError(t, scene.AddPart("body", n, newBlock(t)))
+	require.NoError(t, scene.SetCamera(rig.Root(), defaultCamera()))
+
+	_, err = scene.AtCached(ctx, 0, kinetograph.NewBuildCache())
+	require.Equal(t, context.Canceled, err, "ctx.Err() comes back unwrapped")
 }
