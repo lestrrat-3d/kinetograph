@@ -32,10 +32,10 @@ var (
 	// direction.
 	ErrDegenerateDirection = errors.New("kinetograph: direction has no length")
 
-	// ErrDuplicateName is returned by Scene.AddPart and Scene.AddParametric
-	// for a part name another part already uses, and by Scene.AddLight for a
-	// light name another light already uses. Parts and lights have separate
-	// names: a light may share a part's name.
+	// ErrDuplicateName is returned by Scene.AddPart, Scene.AddParametric and
+	// Scene.AddLinkage for a part name another part already uses, and by
+	// Scene.AddLight for a light name another light already uses. Parts and
+	// lights have separate names: a light may share a part's name.
 	ErrDuplicateName = errors.New("kinetograph: name already used")
 
 	// ErrInvalidLight is returned by Scene.AddLight for a Kind that is neither
@@ -59,6 +59,19 @@ var (
 
 	// ErrNilTrack is returned by Node.Driven for a nil TransformTrack.
 	ErrNilTrack = errors.New("kinetograph: nil track")
+
+	// ErrNilLinkage is returned by NewLinkageTrack and Scene.AddLinkage for a
+	// nil decad.Linkage.
+	ErrNilLinkage = errors.New("kinetograph: nil linkage")
+
+	// ErrForeignLink is returned by NewLinkageTrack for a link that is not
+	// one of the linkage's Links(): nil, the ground link, or a link of
+	// another linkage.
+	ErrForeignLink = errors.New("kinetograph: link does not belong to the linkage")
+
+	// ErrUnnamedBody is returned by Scene.AddLinkage for a body of a link
+	// that has no entry in the names map.
+	ErrUnnamedBody = errors.New("kinetograph: link body has no name")
 
 	// ErrNoCamera is returned when a scene without a camera is evaluated.
 	ErrNoCamera = errors.New("kinetograph: scene has no camera")

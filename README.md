@@ -44,7 +44,10 @@ Regenerate every image on this page with `cd _gallery && go run . > assemble.sh 
 block turning on one revolute joint while the camera orbits on another.
 [`examples/kinetograph_reshape_example_test.go`](examples/kinetograph_reshape_example_test.go) renders a slab whose
 width follows a channel. [`examples/kinetograph_appearance_example_test.go`](examples/kinetograph_appearance_example_test.go)
-fades a block in while a point light circles it. `go test ./examples/` runs all three and checks their output.
+fades a block in while a point light circles it. [`examples/kinetograph_driven_example_test.go`](examples/kinetograph_driven_example_test.go)
+poses a block from a caller's `TransformTrack`. [`examples/kinetograph_linkage_example_test.go`](examples/kinetograph_linkage_example_test.go)
+films a two-link decad `Linkage` along its `Drive` with `Scene.AddLinkage`, each link posed by decad's
+`Linkage.PoseAt`. `go test ./examples/` runs all five and checks their output.
 
 [`_clips/demo/`](_clips/demo/main.go) renders a 4.5 s demo clip: two pins drop into a drilled plate, and a ring
 rises off it and turns half a turn while the camera orbits. `cd _clips/demo && go run . -out out` writes 108 frames

@@ -5,12 +5,12 @@ go 1.26.8
 replace github.com/lestrrat-3d/kinetograph => ../..
 
 require (
-	github.com/lestrrat-3d/decad v0.0.0-20260930143515-7dde3ae229fd
+	github.com/lestrrat-3d/decad v0.0.0-20261006233447-0070f0b2031c
 	github.com/lestrrat-3d/kinetograph v0.0.0-00010101000000-000000000000
-	github.com/lestrrat-3d/r3 v0.0.0-20260925090514-63e64a76b1f9
-	github.com/lestrrat-3d/sketch v0.0.0-20260924052631-80849197f03e
+	github.com/lestrrat-3d/r3 v0.0.0-20261005214828-6011e4189399
+	github.com/lestrrat-3d/sketch v0.0.0-20261006223614-e6740d028b5c
 	github.com/lestrrat-3d/solidlens v0.0.0-20260926143114-9a324f5bb98b
-	github.com/lestrrat-3d/units v0.0.0-20260925090500-8de977f4081b
+	github.com/lestrrat-3d/units v0.0.0-20261004172310-91d157ffd2a9
 )
 
 require (

@@ -5,8 +5,9 @@ the animation to a numbered PNG with [solidlens](https://github.com/lestrrat-3d/
 ffmpeg assembles the PNGs into a clip; kinetograph writes no video itself.
 
 This document is the contract the implementation is built from. §5 states the public API as Go signatures: §5.1 to
-§5.6 are the initial pass, §5.7 and §5.8 are pass 2 (reshape), and §5.2's `TransformTrack` and `Node.Driven` are
-pass 5 (driven nodes). §9 states which pass adds what. A later pass extends this document before it extends the code.
+§5.6 are the initial pass, §5.7 and §5.8 are pass 2 (reshape), §5.2's `TransformTrack` and `Node.Driven` are
+pass 5 (driven nodes), and §5.9 is pass 6 (decad linkages). §9 states which pass adds what. A later pass extends this
+document before it extends the code.
 
 ## 1. What kinetograph is
 
@@ -18,7 +19,8 @@ the posed triangles to solidlens.
 Its first use is decad's landing-page clip: decad parts turning, sliding apart, assembling and being built feature
 by feature, seen from a moving camera. The program that renders it is the `clip` subcommand of decad's `_gallery/`
 module, which imports kinetograph (§9, pass 4). A part can also change shape over time: kinetograph rebuilds its decad body from
-parameters that change with the frame (§9, pass 2).
+parameters that change with the frame (§9, pass 2). A decad `Linkage` can be filmed along a `Drive`: each link's
+node takes the pose decad's `Linkage.PoseAt` returns, the same pose `Document.VerifyLinkage` checks (§9, pass 6).
 
 kinetograph is not a renderer, a video encoder, a physics engine or a CAD kernel. Rendering is solidlens's,
 geometry is decad's, coordinate math is `r3`'s and quantities are `units`'s.
@@ -243,11 +245,28 @@ behind it (decad `docs/multibody-dynamics-design.md` §11).
 `TransformTrack` is kinetograph's type. kinetograph imports no decad package that exists only for dynamics, and
 decad's `_gallery` adapts a `dynamics.Timeline` to the interface; `r3.Transform` is the one type the two share.
 
+### D13. A linkage track asks decad for every pose
+
+`LinkageTrack` (pass 6, §5.9) is the one `TransformTrack` kinetograph ships. It films a decad `Linkage` moving
+along a `Drive`, the motion `Document.VerifyLinkage` checks for collisions. decad builds every pose it checks with
+`Linkage.PoseAt(drive, s)`, where `s` is the `Dimensionless` drive fraction. `LinkageTrack.At(t)` calls `PoseAt` at
+`s = fraction.At(t)` for every `t` and returns one link's pose as given, so a frame draws exactly the pose decad
+checked at that `s`. A pose blended between two `PoseAt` results is a pose decad never checked, so D12's rule
+against blending carries over unchanged.
+
+- The time-to-`s` map is a kinetograph `Channel` (D1). Holds, easing and repeats are keyframes, and the channel's
+  hold before its first keyframe and after its last is the drive's hold at its ends.
+- `PoseAt` returns world poses, so a track's node sits directly under the rig's root, where `Local` is `World`.
+  `Scene.AddLinkage` builds those nodes.
+- The `Linkage`, `Link` and `Drive` types live in decad's root package, which kinetograph already imports. The
+  `Drive` is passed to `PoseAt` unchanged, waypoints (`JointSweep.Via`) included: the track never reads its shape.
+
 ## 5. Public API
 
 Signatures are normative; doc comments on the implementation carry the detail. Every constructor validates what
 it is handed and returns an error from §6's vocabulary rather than a value that would fail later. §5.1 to §5.6 are
-the initial pass; §5.7 and §5.8 are pass 2, which adds declarations and changes no initial-pass signature.
+the initial pass; §5.7 and §5.8 are pass 2, which adds declarations and changes no initial-pass signature; §5.9 is
+pass 6, which does the same.
 
 ### 5.1 `channel.go`: channels, keyframes and easing
 
@@ -604,6 +623,69 @@ with W a `Length` channel that holds 10 mm from 0 to 250 ms and rises linearly t
 each width it is asked to build, so the `// Output:` block shows three builds for four frames, followed by the frame
 count and the file names. It is the end-to-end instance pass 2 is accepted on.
 
+### 5.9 `linkage.go`: decad linkages (pass 6)
+
+```go
+// LinkageTrack is the TransformTrack of one link of a decad linkage moving along a drive (D13). It holds no
+// mutable state.
+type LinkageTrack struct { /* unexported */ }
+
+// NewLinkageTrack returns the track of link under drive, reading the drive fraction s from fraction. It returns
+// ErrNilLinkage for a nil linkage, ErrForeignLink unless link is one of linkage.Links() (nil and the ground link
+// are not), ErrNilChannel for a nil fraction, ErrKind unless fraction.Kind() == units.Dimensionless, and decad's
+// own error, wrapped, when linkage.PoseAt(drive, 0) refuses the drive.
+func NewLinkageTrack(linkage *decad.Linkage, drive decad.Drive, link *decad.Link, fraction *Channel) (*LinkageTrack, error)
+
+// At returns the link's pose from linkage.PoseAt(drive, s) with s = fraction.At(t). It returns the channel's error
+// wrapped, and PoseAt's error wrapped with s.
+func (k *LinkageTrack) At(t time.Duration) (r3.Transform, error)
+
+// AddLinkage adds one driven node per link of linkage under the rig's root, each driven by a LinkageTrack over
+// drive and fraction, and attaches every body of every link to its link's node as a part named names[body]. It
+// returns the nodes in Linkage.Links() order. It returns NewLinkageTrack's errors, ErrUnnamedBody for a link body
+// with no entry in names, and ErrDuplicateName for a name another part, or another body of the linkage, already
+// uses. A failed AddLinkage adds no part.
+func (s *Scene) AddLinkage(linkage *decad.Linkage, drive decad.Drive, fraction *Channel,
+    names map[*decad.Body]string) ([]*Node, error)
+```
+
+**Construction.** `NewLinkageTrack` finds the link's position in `linkage.Links()` once and keeps it. decad gives a
+link its position when the link is created and only appends links, so the position never changes. It copies
+`drive`, each sweep's `Via` included, so a caller that changes its slice afterwards does not change the track. It
+calls `PoseAt(drive, units.Scalar(0))` once to run decad's checks of the drive (a sweep naming a link of another
+linkage, a waypoint of the wrong kind, a waypoint outside a joint's limits) and keeps nothing from the result.
+
+**Evaluation.** `At` evaluates `fraction.At(t)` and passes the value to `PoseAt` as it is: kinetograph does not
+clamp it and does not read its unit. `PoseAt` accepts any finite `s`, and extends the drive's first and last
+segments outside [0, 1], so a channel that leaves [0, 1] shows the linkage past the drive's ends. `At` keeps no
+result (D12). `PoseAt` writes nothing and composes one transform per joint on the link's path, so `At` is safe
+from several goroutines and returns the same transform for the same `t`. The linkage itself is read on every call:
+a caller MUST NOT add links to it, or change a link's bodies, while a scene that reads it is evaluated.
+
+**Exact fractions.** A frame shows exactly the `s` that `VerifyLinkage` checked when `fraction.At(t)` returns that
+value bit for bit at the frame's time. Take a clip at 64 fps, where frame `i` falls at exactly `i·15625000 ns`, and
+a `Linear` fraction from `units.Scalar(0)` at time 0 to `units.Scalar(1)` at frame `n`'s time. `Channel.At`
+computes `u` as the quotient of two whole numbers of nanoseconds and returns `0 + 1·u`, so frame `i` reads `i/n`
+correctly rounded, which is `i/n` exactly when `n` is a power of two. `VerifyLinkage` at resolution `1/n` with `n`
+a power of two checks fractions on that same grid. A frame rate that does not divide one second into whole
+nanoseconds (24 fps does not) puts frame times between grid points.
+
+**AddLinkage.** It builds every track and node and checks every name before it adds the first part. Parts go in
+`Linkage.Links()` order and, within a link, in `Link.Bodies()` order; `names` is only looked up, never iterated
+(§7). An entry for a body that no link holds is ignored, so one map may name the static bodies the caller attaches
+with `AddPart`. A caller attaches a static body, a second copy of a link body (a tint from a collision on, say), a
+light or the camera to the root or to a returned node with the existing calls.
+
+### 5.10 Executable example, pass 6
+
+`examples/kinetograph_linkage_example_test.go` builds a two-link arm: an upper arm turning 0° to 90° about Z at
+the origin, and a forearm turning 0° to −90° about Z at the elbow, (40, 0, 0) at the zero pose. It films the drive
+with `AddLinkage` and a `Linear` fraction from 0 at 0 s to 1 at 1 s, as a 6-frame clip at 4 fps whose last frame,
+at 1.25 s, holds `s = 1`. It renders the clip into a temporary directory and prints each frame's `s`, the forearm
+tip's world position and the file names. The two turns cancel, so the forearm keeps its orientation and its tip,
+(80, 0, 0) at the zero pose, sweeps a quarter circle of radius 40 mm about (40, 0, 0), from (80, 0, 0) to
+(40, 40, 0). It is the end-to-end instance pass 6 is accepted on.
+
 ## 6. Error behaviour
 
 Sentinels live in `errors.go`. Every error a constructor returns wraps one of them, so `errors.Is` branches; the
@@ -621,11 +703,17 @@ message names the offending argument.
 | fixed transform is not a rigid motion (`!IsValid()`); pass 5: a driven node's track returns one | `ErrInvalidTransform` | `Node.Fixed`; pass 5: `Node.Local` (wrapped with the time), surfaced by `Node.World`, `Scene.At` |
 | pass 5: a driven node's `TransformTrack.At` fails | the track's error, wrapped with the time by `Node.Local` and with the part, camera or light name by `Scene.At` | `Node.Local`, `Node.World`, `Scene.At`, `Scene.AtCached`, `Clip.Frame`, `Clip.FrameCached`, surfaced as a `*render.FrameError` |
 | pass 5: nil track | `ErrNilTrack` | `Node.Driven` |
+| pass 6: nil linkage | `ErrNilLinkage` | `NewLinkageTrack`, `AddLinkage` |
+| pass 6: a link that is not one of `linkage.Links()`: nil, the ground link, a link of another linkage | `ErrForeignLink` | `NewLinkageTrack` |
+| pass 6: a nil fraction; a fraction that is not `Dimensionless` | `ErrNilChannel`; `ErrKind` | `NewLinkageTrack`, `AddLinkage` |
+| pass 6: `PoseAt` refuses the drive | decad's error, wrapped (`errors.Is` reaches decad's sentinel) | `NewLinkageTrack`, `AddLinkage` |
+| pass 6: a link body with no entry in `names` | `ErrUnnamedBody` | `AddLinkage` |
+| pass 6: the fraction channel or `PoseAt` fails at `t` | the error, wrapped by `LinkageTrack.At` (with `s` for `PoseAt`), then as any track error (pass 5 row) | `LinkageTrack.At`, then as pass 5 |
 | zero or non-finite revolute axis | `r3.ErrDegenerateAxis` (passed through) | `Revolute` |
 | zero or non-finite prismatic direction; pass 3: zero or non-finite directional light direction | `ErrDegenerateDirection` | `Prismatic`, `AddLight` |
 | pass 3: light kind neither `PointLight` nor `DirectionalLight`; a non-zero vector the kind does not read; a non-finite point light position | `ErrInvalidLight` | `AddLight` |
 | transform composition overflows | `r3.ErrNonFinite` / `r3.ErrNotOrthonormal` (passed through) | `Node.World`, surfaced by `Scene.At` |
-| part name already used; pass 3: light name already used by another light | `ErrDuplicateName` | `AddPart`, `AddParametric`, `AddLight` |
+| part name already used; pass 3: light name already used by another light; pass 6: two link bodies given one name | `ErrDuplicateName` | `AddPart`, `AddParametric`, `AddLight`, `AddLinkage` |
 | node belongs to another rig | `ErrForeignNode` | `AddPart`, `AddParametric`, `SetCamera`, `AddLight` |
 | nil body, nil channel | `ErrNilBody`, `ErrNilChannel` | `AddPart`, `SetCamera`, `Revolute`, `Prismatic`, `AddParametric` (a nil parameter channel); pass 3: `render.New` for a nil light `Intensity` |
 | nil builder | `ErrNilBuilder` | `AddParametric` |
@@ -661,6 +749,7 @@ The claim: the same scene, style and clip produce byte-identical PNG files on th
 | Interpolation is `units.Value` arithmetic | `units` rounds once and canonicalises zero |
 | Transforms are `r3` constructors and `Then`; vertices are `Apply` | `r3` sums in a fixed order |
 | A driven node's `TransformTrack.At` returns the same transform for the same `t` (D12); kinetograph passes `FrameTime(i)` to it unchanged | how often, and on which goroutine, `At` is called cannot reach the bytes |
+| A `LinkageTrack` passes `fraction.At(t)` to `PoseAt` unchanged; `AddLinkage` adds parts in `Linkage.Links()` then `Link.Bodies()` order and only looks `names` up | a linkage frame depends on `t` and the inputs alone, and its parts are in the same order on every run |
 | Each part `AddPart` attached is tessellated once, in `render.New`; each rebuilt body once per render call; decad promises equal vertex and index order for equal payload, tolerance and level (`docs/tessellation-design.md` §1, Determinism row) | a part's base mesh changes only when its parameter tuple does |
 | A parametric part's cache key is each parameter's `Value.MarshalText()` in name order; the names are sorted once with `slices.Sorted` in `AddParametric` | which body a frame gets never depends on map order |
 | `Build` runs once per distinct tuple per `BuildCache`, and a `Builder` returns equal bodies for equal `Params` (§5.7) | which worker built a body cannot reach the bytes |
@@ -678,8 +767,8 @@ the same limit for its bounds. Tests therefore never commit a PNG golden; §10 s
 
 | Path | Owns |
 |---|---|
-| `doc.go` | Package doc: scope, layering (`kinetograph -> decad, r3, units`; `render -> solidlens`), D1–D9 by name, and reshape (§5.7). Pass 3: the root package names a light only as a pose. Pass 5: a driven node (D12). |
-| `errors.go` | The sentinel vocabulary of §6. Pass 3 adds `ErrInvalidLight` and widens `ErrDuplicateName` and `ErrDegenerateDirection` to `AddLight`. Pass 5 adds `ErrNilTrack` and widens `ErrReflection` and `ErrInvalidTransform` to a driven node's `Local`. |
+| `doc.go` | Package doc: scope, layering (`kinetograph -> decad, r3, units`; `render -> solidlens`), D1–D9 by name, and reshape (§5.7). Pass 3: the root package names a light only as a pose. Pass 5: a driven node (D12). Pass 6: a decad linkage (D13). |
+| `errors.go` | The sentinel vocabulary of §6. Pass 3 adds `ErrInvalidLight` and widens `ErrDuplicateName` and `ErrDegenerateDirection` to `AddLight`. Pass 5 adds `ErrNilTrack` and widens `ErrReflection` and `ErrInvalidTransform` to a driven node's `Local`. Pass 6 adds `ErrNilLinkage`, `ErrForeignLink` and `ErrUnnamedBody` and widens `ErrDuplicateName` to `AddLinkage`. |
 | `channel.go` | `Easing` and the five provided easings, `Keyframe`, `Channel`, `NewChannel`, `Constant`. Pass 3 adds `Keyframes`. |
 | `rig.go` | `Rig`, `Node`, the three joint constructors, `Local`, `World`. Pass 5 adds `TransformTrack` and `Driven`. |
 | `camera.go` | `Camera`, `CameraPose`, and the node-local to world evaluation. |
@@ -687,6 +776,7 @@ the same limit for its bounds. Tests therefore never commit a PNG golden; §10 s
 | `scene.go` | `Scene`, `Pose`, `Frame`, `PartInfo`, `AddPart`, `SetCamera`, `Parts`, `At`, `AtCached`. Pass 3 adds `AddLight`, `LightInfo`, `Lights` and `Frame.Lights`. |
 | `reshape.go` | `Params`, `Builder`, `AddParametric`, `BuildCache`, `NewBuildCache`, and the cache key encoding. |
 | `clip.go` | `Clip`, `NewClip`, `FrameCount`, `FrameTime`, `Frame`, `FrameCached`. |
+| `linkage.go` (pass 6) | `LinkageTrack`, `NewLinkageTrack`, `Scene.AddLinkage`. |
 | `internal/memo/memo.go` | `memo.Map`: calls a function once per key, hands concurrent callers for that key the same result, and drops a result whose caller's ctx was done. Backs `BuildCache` and `render`'s mesh cache. |
 | `render/style.go` | `Appearance`, `Style`, `ErrStyle`, style validation. Pass 3 adds `Appearance.Fade`, `LightAppearance`, `Style.Lights` and their validation. |
 | `render/renderer.go` | `Renderer`, `New`, `Frame`; the posed `TriangleSource`; the per-call build and mesh caches; the solidlens scene assembly. Pass 3 adds the node lights, the fade and intensity evaluation and the hidden/opaque/fading grouping. |
@@ -1094,6 +1184,34 @@ Why each piece is out:
 - A vector or transform channel: a driven node interpolates nothing, so D1 stays the rule for every quantity
   kinetograph interpolates.
 
+### Pass 6, decad linkages
+
+Pass 6 adds `LinkageTrack`, `NewLinkageTrack`, `Scene.AddLinkage` (§5.9, D13) and the sentinels `ErrNilLinkage`,
+`ErrForeignLink` and `ErrUnnamedBody`. It changes no earlier signature. It requires decad at `0070f0b2` or later,
+the first commit whose drives pass through waypoints (`JointSweep.Via`). Its first user is decad's `_gallery`
+module, which films a two-link arm that `VerifyLinkage` checks and marks the frame of its first collision.
+
+The acceptance instance is §5.10's example.
+
+Why each piece is in:
+
+- `LinkageTrack`: the adapter from `PoseAt` to `TransformTrack` is the same for every caller, and its
+  bit-for-bit agreement with `PoseAt` is a test kinetograph can own.
+- The fraction as a `Channel`: holds, easing and repeats of the drive are keyframes, as every other animated
+  quantity is (D1), and a caller who needs frame `i` to show a checked `s` exactly gets that from a `Linear`
+  channel (§5.9).
+- `AddLinkage`: a linkage's nodes are one driven node per link under the root, and its parts are the links'
+  bodies. One call builds both, so a caller cannot put a link's body on another link's node.
+- `ErrForeignLink` and `ErrUnnamedBody`: no existing sentinel names a link or a body without a name.
+
+Why each piece is out:
+
+- A collision tint, a marker at the first collision, or any other use of a `LinkageReport`: those are scene
+  choices, made with `AddPart`, `render.Style` and `Appearance.Fade` (pass 3) by the caller.
+- A parent node for `AddLinkage`: `PoseAt` returns world poses, and the static bodies of the document sit in the
+  world frame too. A caller who wants the whole mechanism under a moving node calls `Node.Driven` with
+  `NewLinkageTrack` there, and attaches the static bodies to the same node.
+
 ## 10. Test plan
 
 Every test asserts a computed result: a transform component, a `units.Value`, a pixel coordinate, a file count.
@@ -1158,6 +1276,17 @@ Tests use `testify/require` in an external `_test` package with `t.Context()`, a
 | driven | a block on a driven node translating 12 mm along +X between frames 0 and 5 | the blob centroid's x increases by at least 2 px, y unchanged within 1 px |
 | driven | `Sequence` of a driven clip with 1 and with 3 workers, under `go test -race` in CI | the files are byte-identical between the two runs, and the six frames differ |
 | examples | `Example_kinetograph_driven` | the `// Output:` block, verified by `go test ./examples/` |
+| linkage | the two-link arm, a `Linear` fraction from 0 at 0 s to 1 at 4 s, every link, frame times `i·15625000 ns` for `i` in 0, 1, 85, 86, 171, 256, 300 and −1 | `fraction.At` is `i/256` exactly (0 at −1, 1 at 300); `At` equals `PoseAt(drive, s).Poses[k]` bit for bit, with `k` the link's position in `Links()` |
+| linkage | the same arm under a `SmoothStep` fraction, and under a drive with one `Via` waypoint per sweep | at 9 times, `At` equals `PoseAt(drive, fraction.At(t))` bit for bit; under a `Linear` fraction at the waypoint's `s = 1/2`, the forearm tip is (40·cos 60° + 40·cos 30°, 40·sin 60° + 40·sin 30°, 0) within 1e-9 |
+| linkage | the forearm tip under the `Linear` fraction at s = 1/4 | (40·cos 22.5° + 40, 40·sin 22.5°, 0) within 1e-9 |
+| linkage | `NewLinkageTrack` with a nil linkage, a nil link, the ground, a link of another linkage, a nil fraction, an Angle fraction, a sweep whose `From` is a Length on a revolute joint | `ErrNilLinkage`, `ErrForeignLink` ×3, `ErrNilChannel`, `ErrKind`, decad's `ErrUnitKind` |
+| linkage | change the caller's drive slice (a `To` and a `Via` value) after `NewLinkageTrack` | `At` still equals `PoseAt` of the original drive bit for bit |
+| linkage | a fraction from 0 to `math.MaxFloat64` whose easing returns 2 at u = 1/2 | `At` at the midpoint fails, `errors.Is` reaches `units.ErrNotFinite` |
+| linkage | 8 goroutines calling `At` at the same 16 times, under `go test -race` in CI | every result bit-identical to `PoseAt` at that time |
+| linkage | `AddLinkage` with one body on the upper arm and two on the forearm, a static body by `AddPart` | the returned nodes' `Local(t)` equals `PoseAt` bit for bit, in `Links()` order; `Frame.Poses` names in `Links()` then `Bodies()` order, then the static part; each link part's `Transform` equals `PoseAt` bit for bit; the static part's is the identity |
+| linkage | `AddLinkage` with a nil linkage, a missing name, two bodies sharing a name, a name an existing part uses, a nil fraction, a refused drive | `ErrNilLinkage`, `ErrUnnamedBody`, `ErrDuplicateName` ×2, `ErrNilChannel`, decad's error; `Scene.Parts()` unchanged after each |
+| linkage | the arm through `render.Sequence` with 1 and 3 workers | the files are byte-identical between the two runs, and the first and last frames differ |
+| examples | `Example_kinetograph_linkage` | the `// Output:` block, verified by `go test ./examples/` |
 
 The blob-centroid assertions read what the renderer drew rather than re-deriving solidlens's projection, so a
 change to solidlens's camera model fails them without kinetograph having copied that model.
@@ -1222,8 +1351,8 @@ decad.sweepPayload`), so it cannot be rendered either.
 
 ### decad refusals a `Builder` meets
 
-decad refuses some parameter values a reshape ramp passes through. These results hold at the decad version
-`go.mod` pins (`v0.0.0-20260930143515-7dde3ae229fd`) and at decad commit `d0dc910`, measured by building a
+decad refuses some parameter values a reshape ramp passes through. These results were measured at decad
+`v0.0.0-20260930143515-7dde3ae229fd` and at decad commit `d0dc910` by building a
 96×68×16 mm plate with three cut holes (a bore of radius 18 mm and two bolt holes of radius 7 mm) at chord 0.05 mm with `VerifyNone`:
 
 | Chain | Result |
@@ -1254,6 +1383,8 @@ Every design choice is stated once, in the section that owns it. This section on
 | every quantity kinetograph interpolates is a scalar channel | §4 D1 |
 | a driven node draws its caller's transform, checked and never interpolated or cached | §4 D12, §9 pass 5 |
 | kinetograph never imports decad's dynamics code; decad's `_gallery` adapts a timeline to `TransformTrack` | §4 D12 |
+| a linkage track calls `Linkage.PoseAt` for every time, at a fraction read from a `Channel` | §4 D13, §5.9 |
+| `AddLinkage` puts one driven node per link under the root; collision marks stay with the caller | §5.9, §9 pass 6 |
 | `sketch` is a test-and-example-only dependency | §4 D10 |
 | lights are static in pass 1 and move in pass 3 | §4 D6, §9 |
 | a light's color and intensity, and a part's fade, are `render.Style` channels bound by name | §4 D6, §9 pass 3 |
