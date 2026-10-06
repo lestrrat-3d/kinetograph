@@ -30,6 +30,15 @@
 // goroutines at once. A track error, or a result that is a reflection or not a
 // rigid motion, fails the frame at t.
 //
+// # Linkages
+//
+// A LinkageTrack films one link of a decad.Linkage moving along a
+// decad.Drive (D13). Its At reads the drive fraction s from a Dimensionless
+// channel and returns the link's pose from Linkage.PoseAt, the call
+// Document.VerifyLinkage builds every pose it checks with. Scene.AddLinkage
+// adds one driven node per link under the rig's root and attaches each
+// link's bodies to its node.
+//
 // # Lights and fades
 //
 // Scene.AddLight attaches a PointLight or a DirectionalLight to a node, as
