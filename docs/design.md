@@ -6,7 +6,7 @@ ffmpeg assembles the PNGs into a clip; kinetograph writes no video itself.
 
 This document is the contract the implementation is built from. §5 states the public API as Go signatures: §5.1 to
 §5.6 are the initial pass, §5.7 and §5.8 are pass 2 (reshape), §5.2's `TransformTrack` and `Node.Driven` are
-pass 5 (driven nodes), and §5.9 is pass 6 (decad linkages). §9 states which pass adds what. A later pass extends this
+pass 5 (driven nodes), §5.9 is pass 6 (decad linkages), and §5.11 is pass 7 (linkage schedules). §9 states which pass adds what. A later pass extends this
 document before it extends the code.
 
 ## 1. What kinetograph is
@@ -247,7 +247,8 @@ decad's `_gallery` adapts a `dynamics.Timeline` to the interface; `r3.Transform`
 
 ### D13. A linkage track asks decad for every pose
 
-`LinkageTrack` (pass 6, §5.9) is the one `TransformTrack` kinetograph ships. It films a decad `Linkage` moving
+`LinkageTrack` (pass 6, §5.9) and `ScheduleTrack` (pass 7, §5.11) are the two `TransformTrack`s kinetograph ships.
+`LinkageTrack` films a decad `Linkage` moving
 along a `Drive`, the motion `Document.VerifyLinkage` checks for collisions. decad builds every pose it checks with
 `Linkage.PoseAt(drive, s)`, where `s` is the `Dimensionless` drive fraction. `LinkageTrack.At(t)` calls `PoseAt` at
 `s = fraction.At(t)` for every `t` and returns one link's pose as given, so a frame draws exactly the pose decad
@@ -260,6 +261,13 @@ against blending carries over unchanged.
   `Scene.AddLinkage` builds those nodes.
 - The `Linkage`, `Link` and `Drive` types live in decad's root package, which kinetograph already imports. The
   `Drive` is passed to `PoseAt` unchanged, waypoints (`JointSweep.Via`) included: the track never reads its shape.
+- A drive that moves a closed loop (decad `Linkage.Close`) states one joint of the loop, and decad reads every
+  other loop joint from certified enclosures it asks `sketch` for. `Linkage.PoseAt` builds a `decad.Schedule` for
+  such a drive on every call and discards it. `ScheduleTrack.At` calls `Schedule.PoseAt` on one schedule the
+  caller built once. `VerifyLinkage` reads every pose of a looped drive through a schedule of the same inputs,
+  and decad returns equal poses bit for bit from two schedules of the same inputs, so both tracks draw the pose
+  decad checked. The schedule caches the enclosures it asked for; that cache is decad's, and kinetograph still
+  caches no `At` result (D12).
 
 ## 5. Public API
 
@@ -686,6 +694,55 @@ tip's world position and the file names. The two turns cancel, so the forearm ke
 (80, 0, 0) at the zero pose, sweeps a quarter circle of radius 40 mm about (40, 0, 0), from (80, 0, 0) to
 (40, 40, 0). It is the end-to-end instance pass 6 is accepted on.
 
+### 5.11 `linkage.go`: linkage schedules (pass 7)
+
+```go
+// ScheduleTrack is the TransformTrack of one link of a decad linkage moving along a decad.Schedule (D13). It
+// holds no mutable state of its own.
+type ScheduleTrack struct { /* unexported */ }
+
+// NewScheduleTrack returns the track of link under schedule, reading the drive fraction s from fraction. It
+// returns ErrNilSchedule for a nil schedule, ErrForeignLink unless link is one of schedule.Linkage().Links() (nil
+// and the ground link are not), ErrNilChannel for a nil fraction, and ErrKind unless
+// fraction.Kind() == units.Dimensionless.
+func NewScheduleTrack(schedule *decad.Schedule, link *decad.Link, fraction *Channel) (*ScheduleTrack, error)
+
+// At returns the link's pose from schedule.PoseAt(context.Background(), s) with s = fraction.At(t). It returns
+// the channel's error wrapped, and PoseAt's error wrapped with s.
+func (k *ScheduleTrack) At(t time.Duration) (r3.Transform, error)
+
+// AddSchedule is AddLinkage for a schedule: one driven node per link of schedule.Linkage() under the rig's root,
+// each driven by a ScheduleTrack over schedule and fraction, and every link body attached as AddLinkage attaches
+// it. It returns ErrNilSchedule, NewScheduleTrack's errors for fraction, and AddLinkage's errors for names.
+func (s *Scene) AddSchedule(schedule *decad.Schedule, fraction *Channel,
+    names map[*decad.Body]string) ([]*Node, error)
+```
+
+**Construction.** `NewScheduleTrack` finds the link's position in `schedule.Linkage().Links()` once and keeps it,
+as `NewLinkageTrack` does (§5.9). `Linkage.Schedule` has already checked the drive, so `NewScheduleTrack` and
+`AddSchedule` call no `PoseAt`, and copy nothing: `Schedule.Drive` returns a copy, and the schedule keeps its own.
+
+**Evaluation.** `At` evaluates `fraction.At(t)` and passes the value to `Schedule.PoseAt` as it is, under
+`context.Background()`, because `TransformTrack.At` takes no context. `At` keeps no result (D12). `Schedule.PoseAt`
+is safe for concurrent callers, so `At` is safe from several goroutines and returns the same transform for the
+same `t`. For a tree linkage `Schedule.PoseAt` is `Linkage.PoseAt`, and an `s` outside [0, 1] extends the drive
+as §5.9 says. For a drive that moves a loop, decad refuses an `s` outside [0, 1] with `ErrUnsupported`, and
+refuses an `s` it cannot certify the loop at (a four-bar driven past its fold) with `ErrUnsupported` wrapping
+`sketch`'s error. A `Linear` fraction from 0 to 1 holds its ends outside its keyframes and never leaves [0, 1].
+§5.9's exact-fraction rule holds unchanged.
+
+**AddSchedule.** It adds nodes and parts exactly as `AddLinkage` does (§5.9), over `schedule.Linkage()`.
+
+### 5.12 Executable example, pass 7
+
+`examples/kinetograph_schedule_example_test.go` builds decad's crank-rocker: ground 100 mm, a crank of 30 mm
+turning 0° to 90° about Z at the origin, a coupler of 80 mm hung from the crank, and a follower of 70 mm turning
+about Z at (100, 0, 0), closed onto the coupler at the pin above the ground line. It builds one `Schedule` for the
+crank's drive, films it with `AddSchedule` and a `Linear` fraction from 0 at 0 s to 1 at 1 s, as a 5-frame clip at
+4 fps, and renders it into a temporary directory. It prints each frame's `s`, the pin's world position and the
+follower's angle from the ground line, which match the four-bar's two-circle construction (110.3° at `s = 0`,
+113.3° at `s = 1`), and the file names. It is the end-to-end instance pass 7 is accepted on.
+
 ## 6. Error behaviour
 
 Sentinels live in `errors.go`. Every error a constructor returns wraps one of them, so `errors.Is` branches; the
@@ -707,6 +764,11 @@ message names the offending argument.
 | pass 6: a link that is not one of `linkage.Links()`: nil, the ground link, a link of another linkage | `ErrForeignLink` | `NewLinkageTrack` |
 | pass 6: a nil fraction; a fraction that is not `Dimensionless` | `ErrNilChannel`; `ErrKind` | `NewLinkageTrack`, `AddLinkage` |
 | pass 6: `PoseAt` refuses the drive | decad's error, wrapped (`errors.Is` reaches decad's sentinel) | `NewLinkageTrack`, `AddLinkage` |
+| pass 7: nil schedule | `ErrNilSchedule` | `NewScheduleTrack`, `AddSchedule` |
+| pass 7: a link that is not one of `schedule.Linkage().Links()` | `ErrForeignLink` | `NewScheduleTrack` |
+| pass 7: a nil fraction; a fraction that is not `Dimensionless` | `ErrNilChannel`; `ErrKind` | `NewScheduleTrack`, `AddSchedule` |
+| pass 7: a link body with no entry in `names`; two link bodies given one name, or a name a part already uses | `ErrUnnamedBody`; `ErrDuplicateName` | `AddSchedule` |
+| pass 7: the fraction channel or `Schedule.PoseAt` fails at `t` (an `s` outside [0, 1] or past a fold on a looped drive among them) | the error, wrapped by `ScheduleTrack.At` (with `s` for `PoseAt`), then as any track error (pass 5 row) | `ScheduleTrack.At`, then as pass 5 |
 | pass 6: a link body with no entry in `names` | `ErrUnnamedBody` | `AddLinkage` |
 | pass 6: the fraction channel or `PoseAt` fails at `t` | the error, wrapped by `LinkageTrack.At` (with `s` for `PoseAt`), then as any track error (pass 5 row) | `LinkageTrack.At`, then as pass 5 |
 | zero or non-finite revolute axis | `r3.ErrDegenerateAxis` (passed through) | `Revolute` |
@@ -750,6 +812,7 @@ The claim: the same scene, style and clip produce byte-identical PNG files on th
 | Transforms are `r3` constructors and `Then`; vertices are `Apply` | `r3` sums in a fixed order |
 | A driven node's `TransformTrack.At` returns the same transform for the same `t` (D12); kinetograph passes `FrameTime(i)` to it unchanged | how often, and on which goroutine, `At` is called cannot reach the bytes |
 | A `LinkageTrack` passes `fraction.At(t)` to `PoseAt` unchanged; `AddLinkage` adds parts in `Linkage.Links()` then `Link.Bodies()` order and only looks `names` up | a linkage frame depends on `t` and the inputs alone, and its parts are in the same order on every run |
+| A `ScheduleTrack` passes `fraction.At(t)` to `Schedule.PoseAt` unchanged, and decad returns equal poses for equal `s` from one schedule or two of the same inputs; `AddSchedule` adds parts as `AddLinkage` does | a looped linkage's frame depends on `t` and the inputs alone, whichever worker renders it |
 | Each part `AddPart` attached is tessellated once, in `render.New`; each rebuilt body once per render call; decad promises equal vertex and index order for equal payload, tolerance and level (`docs/tessellation-design.md` §1, Determinism row) | a part's base mesh changes only when its parameter tuple does |
 | A parametric part's cache key is each parameter's `Value.MarshalText()` in name order; the names are sorted once with `slices.Sorted` in `AddParametric` | which body a frame gets never depends on map order |
 | `Build` runs once per distinct tuple per `BuildCache`, and a `Builder` returns equal bodies for equal `Params` (§5.7) | which worker built a body cannot reach the bytes |
@@ -767,8 +830,8 @@ the same limit for its bounds. Tests therefore never commit a PNG golden; §10 s
 
 | Path | Owns |
 |---|---|
-| `doc.go` | Package doc: scope, layering (`kinetograph -> decad, r3, units`; `render -> solidlens`), D1–D9 by name, and reshape (§5.7). Pass 3: the root package names a light only as a pose. Pass 5: a driven node (D12). Pass 6: a decad linkage (D13). |
-| `errors.go` | The sentinel vocabulary of §6. Pass 3 adds `ErrInvalidLight` and widens `ErrDuplicateName` and `ErrDegenerateDirection` to `AddLight`. Pass 5 adds `ErrNilTrack` and widens `ErrReflection` and `ErrInvalidTransform` to a driven node's `Local`. Pass 6 adds `ErrNilLinkage`, `ErrForeignLink` and `ErrUnnamedBody` and widens `ErrDuplicateName` to `AddLinkage`. |
+| `doc.go` | Package doc: scope, layering (`kinetograph -> decad, r3, units`; `render -> solidlens`), D1–D9 by name, and reshape (§5.7). Pass 3: the root package names a light only as a pose. Pass 5: a driven node (D12). Pass 6: a decad linkage (D13). Pass 7: a decad schedule (D13). |
+| `errors.go` | The sentinel vocabulary of §6. Pass 3 adds `ErrInvalidLight` and widens `ErrDuplicateName` and `ErrDegenerateDirection` to `AddLight`. Pass 5 adds `ErrNilTrack` and widens `ErrReflection` and `ErrInvalidTransform` to a driven node's `Local`. Pass 6 adds `ErrNilLinkage`, `ErrForeignLink` and `ErrUnnamedBody` and widens `ErrDuplicateName` to `AddLinkage`. Pass 7 adds `ErrNilSchedule` and widens `ErrForeignLink`, `ErrUnnamedBody` and `ErrDuplicateName` to `NewScheduleTrack` and `AddSchedule`. |
 | `channel.go` | `Easing` and the five provided easings, `Keyframe`, `Channel`, `NewChannel`, `Constant`. Pass 3 adds `Keyframes`. |
 | `rig.go` | `Rig`, `Node`, the three joint constructors, `Local`, `World`. Pass 5 adds `TransformTrack` and `Driven`. |
 | `camera.go` | `Camera`, `CameraPose`, and the node-local to world evaluation. |
@@ -776,7 +839,7 @@ the same limit for its bounds. Tests therefore never commit a PNG golden; §10 s
 | `scene.go` | `Scene`, `Pose`, `Frame`, `PartInfo`, `AddPart`, `SetCamera`, `Parts`, `At`, `AtCached`. Pass 3 adds `AddLight`, `LightInfo`, `Lights` and `Frame.Lights`. |
 | `reshape.go` | `Params`, `Builder`, `AddParametric`, `BuildCache`, `NewBuildCache`, and the cache key encoding. |
 | `clip.go` | `Clip`, `NewClip`, `FrameCount`, `FrameTime`, `Frame`, `FrameCached`. |
-| `linkage.go` (pass 6) | `LinkageTrack`, `NewLinkageTrack`, `Scene.AddLinkage`. |
+| `linkage.go` (pass 6, pass 7) | `LinkageTrack`, `NewLinkageTrack`, `Scene.AddLinkage`; pass 7 adds `ScheduleTrack`, `NewScheduleTrack`, `Scene.AddSchedule`. |
 | `internal/memo/memo.go` | `memo.Map`: calls a function once per key, hands concurrent callers for that key the same result, and drops a result whose caller's ctx was done. Backs `BuildCache` and `render`'s mesh cache. |
 | `render/style.go` | `Appearance`, `Style`, `ErrStyle`, style validation. Pass 3 adds `Appearance.Fade`, `LightAppearance`, `Style.Lights` and their validation. |
 | `render/renderer.go` | `Renderer`, `New`, `Frame`; the posed `TriangleSource`; the per-call build and mesh caches; the solidlens scene assembly. Pass 3 adds the node lights, the fade and intensity evaluation and the hidden/opaque/fading grouping. |
@@ -1212,6 +1275,31 @@ Why each piece is out:
   world frame too. A caller who wants the whole mechanism under a moving node calls `Node.Driven` with
   `NewLinkageTrack` there, and attaches the static bodies to the same node.
 
+### Pass 7, linkage schedules
+
+Pass 7 adds `ScheduleTrack`, `NewScheduleTrack`, `Scene.AddSchedule` (§5.11, D13) and the sentinel
+`ErrNilSchedule`. It changes no earlier signature. It requires decad with `Schedule.Linkage()`, the accessor that
+maps a link to its position in a schedule's poses. Its first user is decad's `_gallery` module, which films the
+crank-rocker of decad's `docs/linkage-check-design.md` §15.10 (scene 7) with a track of its own today.
+
+The acceptance instance is §5.12's example.
+
+Why each piece is in:
+
+- `ScheduleTrack`: `Linkage.PoseAt` on a looped drive builds the loop's scene, its zero pose and the drive's
+  decomposition on every call, which costs about 0.1 s to 0.4 s per call on the crank-rocker, against one
+  `Schedule` built once. Every frame asks one pose per link.
+- `AddSchedule`: the nodes and parts of a schedule are those of its linkage, so one call builds both, as
+  `AddLinkage` does.
+- `ErrNilSchedule`: `ErrNilLinkage` would name an argument the caller never passed.
+
+Why each piece is out:
+
+- `AddLinkage` choosing between a drive and a schedule: one Go signature cannot take either without an `any`
+  argument, and a sibling call keeps both signatures typed.
+- A context on `ScheduleTrack`: `TransformTrack.At` takes none (D12). A caller that must cancel a render cancels
+  the `Sequence` context, and the frame in flight finishes its `PoseAt` call.
+
 ## 10. Test plan
 
 Every test asserts a computed result: a transform component, a `units.Value`, a pixel coordinate, a file count.
@@ -1287,6 +1375,13 @@ Tests use `testify/require` in an external `_test` package with `t.Context()`, a
 | linkage | `AddLinkage` with a nil linkage, a missing name, two bodies sharing a name, a name an existing part uses, a nil fraction, a refused drive | `ErrNilLinkage`, `ErrUnnamedBody`, `ErrDuplicateName` ×2, `ErrNilChannel`, decad's error; `Scene.Parts()` unchanged after each |
 | linkage | the arm through `render.Sequence` with 1 and 3 workers | the files are byte-identical between the two runs, and the first and last frames differ |
 | examples | `Example_kinetograph_linkage` | the `// Output:` block, verified by `go test ./examples/` |
+| schedule | the crank-rocker (decad's scene 7) through `AddSchedule`, a `Linear` fraction from 0 at 0 s to 1 at 4 s, frames `i` in 0, 1, 36, 110, 256 at 64 fps | `fraction.At` is `i/256` exactly; every node's `Local` and every part's `Transform` equal `Schedule.PoseAt(i/256).Poses[k]` bit for bit; at `s = 1` the crank carries (30, 0, 0) to (0, 30, 0) within 1e-12, and the follower carries the pin to the two-circle construction's pin at 90° within 1e-8 |
+| schedule | the same frames, every link, through `LinkageTrack` (one `Linkage.PoseAt` per call) and `ScheduleTrack`; the two-link arm's waypoint drive the same way at 8 frames from −1 to 300 | the two tracks' transforms equal bit for bit |
+| schedule | decad's non-Grashof four-bar (crank 50, coupler 60, follower 50) driven 0° to 90°, past its fold at s ≈ 0.9745 | `At` at s = 1/2 equals `Schedule.PoseAt` bit for bit; `At` at s = 1 returns the zero transform and an error that `errors.Is` reaches `decad.ErrUnsupported` and `sketch.ErrNotCertified` through, naming `s = 1` |
+| schedule | `NewScheduleTrack` with a nil schedule, a nil link, the ground, a link of another linkage, a nil fraction, an Angle fraction; a fraction that overflows at 500 ms | `ErrNilSchedule`, `ErrForeignLink` ×3, `ErrNilChannel`, `ErrKind`; `units.ErrNotFinite` from `At` |
+| schedule | 8 goroutines calling one crank-rocker `ScheduleTrack` at 16 times each, under `go test -race` in CI | every result bit-identical to `Schedule.PoseAt` at that time |
+| schedule | `AddSchedule` with a nil schedule, a nil fraction, a missing name, two bodies sharing a name, a name an existing part uses | `ErrNilSchedule`, `ErrNilChannel`, `ErrUnnamedBody`, `ErrDuplicateName` ×2; `Scene.Parts()` unchanged after each |
+| examples | `Example_kinetograph_schedule` | the `// Output:` block, verified by `go test ./examples/` |
 
 The blob-centroid assertions read what the renderer drew rather than re-deriving solidlens's projection, so a
 change to solidlens's camera model fails them without kinetograph having copied that model.
@@ -1385,6 +1480,7 @@ Every design choice is stated once, in the section that owns it. This section on
 | kinetograph never imports decad's dynamics code; decad's `_gallery` adapts a timeline to `TransformTrack` | §4 D12 |
 | a linkage track calls `Linkage.PoseAt` for every time, at a fraction read from a `Channel` | §4 D13, §5.9 |
 | `AddLinkage` puts one driven node per link under the root; collision marks stay with the caller | §5.9, §9 pass 6 |
+| a looped linkage is filmed through one `decad.Schedule`, whose `PoseAt` a `ScheduleTrack` calls for every time | §4 D13, §5.11, §9 pass 7 |
 | `sketch` is a test-and-example-only dependency | §4 D10 |
 | lights are static in pass 1 and move in pass 3 | §4 D6, §9 |
 | a light's color and intensity, and a part's fade, are `render.Style` channels bound by name | §4 D6, §9 pass 3 |

@@ -13,6 +13,8 @@ kinetograph writes no video.
   keyframes with easing. A driven node (`Node.Driven`) takes its transform at each time from
   a caller's `TransformTrack` and interpolates nothing. `LinkageTrack` is the track of one
   decad linkage link: `Linkage.PoseAt` at a fraction read from a `Dimensionless` channel.
+  `ScheduleTrack` does the same through one prebuilt `decad.Schedule` (`Schedule.PoseAt`),
+  for a linkage with a closed loop.
 - Rig: joints form a tree. A joint value becomes an `r3.Transform`; a child's world
   transform is its own composed with its parent's. Bodies AND the camera attach to nodes.
 - Reshape: a `Builder` makes a part's body from channel values (`Params`); a `BuildCache`
@@ -23,14 +25,14 @@ kinetograph writes no video.
 - Output: `render` builds one solidlens scene per frame and writes one PNG per frame.
 
 **Current state: pass 1 (the initial pass), pass 2 (reshape), pass 3 (animated
-appearance), pass 5 (driven nodes) and pass 6 (decad linkages) are implemented.**
-`docs/design.md` is the contract. §5.1–§5.6 there are the initial pass's public API,
-§5.7–§5.8 reshape's, §9 "Pass 3" animated appearance's, §5.2's `TransformTrack`/`Driven` and
-§9 "Pass 5" driven nodes', §5.9–§5.10 and §9 "Pass 6" decad linkages'. §12
-points at where each settled choice lives. The nested program modules here are `_clips/demo/`
-(the demo clip) and `_gallery/` (the README's GIFs). decad's landing-page clip (pass 4) is the
-`clip` subcommand of decad's `_gallery/` module, which imports kinetograph (`docs/design.md`
-§9 "Pass 4").
+appearance), pass 5 (driven nodes), pass 6 (decad linkages) and pass 7 (linkage schedules)
+are implemented.** `docs/design.md` is the contract. §5.1–§5.6 there are the initial pass's
+public API, §5.7–§5.8 reshape's, §9 "Pass 3" animated appearance's, §5.2's
+`TransformTrack`/`Driven` and §9 "Pass 5" driven nodes', §5.9–§5.10 and §9 "Pass 6" decad
+linkages', §5.11–§5.12 and §9 "Pass 7" linkage schedules'. §12 points at where each settled
+choice lives. The nested program modules here are `_clips/demo/` (the demo clip) and
+`_gallery/` (the README's GIFs). decad's landing-page clip (pass 4) is the `clip` subcommand
+of decad's `_gallery/` module, which imports kinetograph (`docs/design.md` §9 "Pass 4").
 
 ## Read before you write
 
@@ -40,7 +42,7 @@ points at where each settled choice lives. The nested program modules here are `
 | Any public type or function | `docs/design.md` §4 (decisions D1–D13), §5 (API), §6 (errors) |
 | Channel, easing or interpolation code | `docs/design.md` §5.1, §7 |
 | Rig, joint or camera code | `docs/design.md` §4 D1, D2, D5, D12, §5.2, §5.3 |
-| Linkage code (`linkage.go`) | `docs/design.md` §4 D12, D13, §5.9, §9 pass 6 |
+| Linkage code (`linkage.go`) | `docs/design.md` §4 D12, D13, §5.9, §5.11, §9 pass 6, pass 7 |
 | Anything under `render/` | `docs/design.md` §5.5, §6, §7; decad's `_gallery/` (the reference use of solidlens) |
 | Reshape code (`reshape.go`, `internal/memo/`, render's per-call caches) | `docs/design.md` §5.7, §7 |
 | Light or fade code (`light.go`, `render/fade.go`, `render/style.go`) | `docs/design.md` §4 D6, §9 pass 3, §11 |
@@ -64,9 +66,11 @@ points at where each settled choice lives. The nested program modules here are `
   (`ErrInvalidTransform`, `ErrReflection`). NEVER interpolate, hold or cache an `At` result
   across times, and NEVER substitute another pose for a failed one → the error fails the
   frame. NEVER import decad's `dynamics` package; decad's `_gallery` adapts its timeline.
-- **A linkage track calls `Linkage.PoseAt` for every `t`** (`docs/design.md` §4 D13). NEVER
-  clamp or round the fraction, and NEVER blend two `PoseAt` poses → pass `fraction.At(t)` to
-  `PoseAt` unchanged. Collision tints and markers stay in the caller (`AddPart`, `Style`).
+- **A linkage track calls `Linkage.PoseAt` for every `t`, a schedule track `Schedule.PoseAt`**
+  (`docs/design.md` §4 D13). NEVER clamp or round the fraction, and NEVER blend two `PoseAt`
+  poses → pass `fraction.At(t)` to `PoseAt` unchanged. The schedule's enclosure cache is
+  decad's; kinetograph caches no pose. Collision tints and markers stay in the caller
+  (`AddPart`, `Style`).
 - **A rigid pose moves the tessellated vertices, never the decad body.** Tessellate each part
   once per `(body, chord)` with `decad.WithVerification(decad.VerifyNone)`; per frame apply
   the node's world transform with `r3.Transform.Apply`. NEVER call `Body.Placed` or
