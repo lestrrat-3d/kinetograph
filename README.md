@@ -47,7 +47,9 @@ width follows a channel. [`examples/kinetograph_appearance_example_test.go`](exa
 fades a block in while a point light circles it. [`examples/kinetograph_driven_example_test.go`](examples/kinetograph_driven_example_test.go)
 poses a block from a caller's `TransformTrack`. [`examples/kinetograph_linkage_example_test.go`](examples/kinetograph_linkage_example_test.go)
 films a two-link decad `Linkage` along its `Drive` with `Scene.AddLinkage`, each link posed by decad's
-`Linkage.PoseAt`. `go test ./examples/` runs all five and checks their output.
+`Linkage.PoseAt`. [`examples/kinetograph_schedule_example_test.go`](examples/kinetograph_schedule_example_test.go)
+films a crank-rocker, a linkage with a closed loop, with `Scene.AddSchedule` through one decad `Schedule`.
+`go test ./examples/` runs all six and checks their output.
 
 [`_clips/demo/`](_clips/demo/main.go) renders a 4.5 s demo clip: two pins drop into a drilled plate, and a ring
 rises off it and turns half a turn while the camera orbits. `cd _clips/demo && go run . -out out` writes 108 frames

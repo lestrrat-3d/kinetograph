@@ -1,6 +1,7 @@
 package kinetograph
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"time"
@@ -57,14 +58,23 @@ func NewLinkageTrack(linkage *decad.Linkage, drive decad.Drive, link *decad.Link
 	return &LinkageTrack{linkage: linkage, drive: drive, index: index, fraction: fraction}, nil
 }
 
+// checkLinkageFraction returns ErrNilChannel for a nil fraction and ErrKind
+// unless fraction is Dimensionless.
+func checkLinkageFraction(fraction *Channel) error {
+	if fraction == nil {
+		return fmt.Errorf("%w: argument fraction", ErrNilChannel)
+	}
+	if fraction.Kind() != units.Dimensionless {
+		return fmt.Errorf("%w: linkage fraction is %s, want %s", ErrKind, fraction.Kind(), units.Dimensionless)
+	}
+	return nil
+}
+
 // checkLinkageDrive checks fraction, and drive against linkage, and returns
 // a copy of drive.
 func checkLinkageDrive(linkage *decad.Linkage, drive decad.Drive, fraction *Channel) (decad.Drive, error) {
-	if fraction == nil {
-		return nil, fmt.Errorf("%w: argument fraction", ErrNilChannel)
-	}
-	if fraction.Kind() != units.Dimensionless {
-		return nil, fmt.Errorf("%w: linkage fraction is %s, want %s", ErrKind, fraction.Kind(), units.Dimensionless)
+	if err := checkLinkageFraction(fraction); err != nil {
+		return nil, err
 	}
 	owned := make(decad.Drive, len(drive))
 	for i, sweep := range drive {
@@ -89,6 +99,74 @@ func (k *LinkageTrack) At(t time.Duration) (r3.Transform, error) {
 	pose, err := k.linkage.PoseAt(k.drive, s)
 	if err != nil {
 		return r3.Transform{}, fmt.Errorf("kinetograph: linkage pose at s = %s: %w", s, err)
+	}
+	return pose.Poses[k.index], nil
+}
+
+// ScheduleTrack is the TransformTrack of one link of a decad.Linkage moving
+// along a decad.Schedule, which Linkage.Schedule builds once from a drive for
+// repeated PoseAt calls. At(t) reads the drive fraction s from a Dimensionless channel
+// and returns the link's world pose from Schedule.PoseAt.
+// Document.VerifyLinkage reads every pose of a drive that moves a closed loop
+// through a schedule of the same inputs, so a frame draws exactly the pose
+// decad checked at that s.
+//
+// For a drive that moves a loop, Linkage.PoseAt builds a new schedule on
+// every call, while one Schedule keeps the loop's scene and caches the
+// enclosures it has asked for. A LinkageTrack and a ScheduleTrack over the
+// same drive return equal poses bit for bit; use a ScheduleTrack when the
+// linkage has a loop. For a tree linkage, Schedule.PoseAt is Linkage.PoseAt.
+//
+// A ScheduleTrack holds no mutable state of its own. Schedule.PoseAt is safe
+// for concurrent use and returns equal poses for equal fractions, so At
+// returns the same transform for the same t and is safe to call from several
+// goroutines at once. The caller MUST NOT add links to the schedule's
+// linkage while a scene that reads it is evaluated.
+type ScheduleTrack struct {
+	schedule *decad.Schedule
+	index    int      // the link's position in schedule.Linkage().Links()
+	fraction *Channel // Dimensionless
+}
+
+// NewScheduleTrack returns the track of link under schedule, reading the
+// drive fraction s at t from fraction.At(t). The schedule has already checked
+// its drive, so NewScheduleTrack calls no PoseAt.
+//
+// It returns ErrNilSchedule for a nil schedule, ErrForeignLink unless link is
+// one of schedule.Linkage().Links() (nil and the ground link are not),
+// ErrNilChannel for a nil fraction, and ErrKind unless fraction.Kind() is
+// units.Dimensionless.
+func NewScheduleTrack(schedule *decad.Schedule, link *decad.Link, fraction *Channel) (*ScheduleTrack, error) {
+	if schedule == nil {
+		return nil, fmt.Errorf("%w: argument schedule", ErrNilSchedule)
+	}
+	index := -1
+	if link != nil {
+		index = slices.Index(schedule.Linkage().Links(), link)
+	}
+	if index < 0 {
+		return nil, fmt.Errorf("%w: argument link", ErrForeignLink)
+	}
+	if err := checkLinkageFraction(fraction); err != nil {
+		return nil, err
+	}
+	return &ScheduleTrack{schedule: schedule, index: index, fraction: fraction}, nil
+}
+
+// At returns the link's pose from schedule.PoseAt with s = fraction.At(t),
+// passed to PoseAt unchanged under context.Background(). For a drive that
+// moves a loop, PoseAt refuses an s outside [0, 1], and an s past the point
+// where decad could certify the loop, with decad.ErrUnsupported; keep the
+// channel inside the drive. It returns the channel's error wrapped, and
+// PoseAt's error wrapped with s.
+func (k *ScheduleTrack) At(t time.Duration) (r3.Transform, error) {
+	s, err := k.fraction.At(t)
+	if err != nil {
+		return r3.Transform{}, fmt.Errorf("kinetograph: schedule fraction: %w", err)
+	}
+	pose, err := k.schedule.PoseAt(context.Background(), s)
+	if err != nil {
+		return r3.Transform{}, fmt.Errorf("kinetograph: schedule pose at s = %s: %w", s, err)
 	}
 	return pose.Poses[k.index], nil
 }
@@ -119,13 +197,43 @@ func (s *Scene) AddLinkage(linkage *decad.Linkage, drive decad.Drive, fraction *
 	if err != nil {
 		return nil, err
 	}
+	return s.addLinks(linkage, names, func(k int) TransformTrack {
+		return &LinkageTrack{linkage: linkage, drive: drive, index: k, fraction: fraction}
+	})
+}
+
+// AddSchedule is AddLinkage for a prepared schedule: one driven node per
+// link of schedule.Linkage() directly under the rig's root, each driven by a
+// ScheduleTrack over schedule and fraction, with every link body attached as
+// AddLinkage attaches it. It returns the nodes in Linkage.Links() order.
+//
+// It returns ErrNilSchedule for a nil schedule, NewScheduleTrack's errors
+// for fraction, and AddLinkage's errors for names. A failed AddSchedule adds
+// no part. AddSchedule is not safe beside At or AtCached.
+func (s *Scene) AddSchedule(schedule *decad.Schedule, fraction *Channel,
+	names map[*decad.Body]string) ([]*Node, error) {
+	if schedule == nil {
+		return nil, fmt.Errorf("%w: argument schedule", ErrNilSchedule)
+	}
+	if err := checkLinkageFraction(fraction); err != nil {
+		return nil, err
+	}
+	return s.addLinks(schedule.Linkage(), names, func(k int) TransformTrack {
+		return &ScheduleTrack{schedule: schedule, index: k, fraction: fraction}
+	})
+}
+
+// addLinks adds one driven node per link of linkage under the root, driven
+// by trackOf(k) for the link at index k, and the links' bodies as parts. It
+// checks every name before it adds the first part.
+func (s *Scene) addLinks(linkage *decad.Linkage, names map[*decad.Body]string,
+	trackOf func(k int) TransformTrack) ([]*Node, error) {
 	links := linkage.Links()
 	nodes := make([]*Node, len(links))
 	var added []part
 	taken := make(map[string]struct{}) // the names this call adds; lookup only, never iterated
 	for k, link := range links {
-		track := &LinkageTrack{linkage: linkage, drive: drive, index: k, fraction: fraction}
-		node, err := s.rig.Root().Driven(track)
+		node, err := s.rig.Root().Driven(trackOf(k))
 		if err != nil {
 			return nil, err
 		}

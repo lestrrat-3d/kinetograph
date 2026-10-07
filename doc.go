@@ -39,6 +39,11 @@
 // adds one driven node per link under the rig's root and attaches each
 // link's bodies to its node.
 //
+// A drive that moves a closed loop is filmed through a decad.Schedule, built
+// once with Linkage.Schedule. A ScheduleTrack returns the link's pose from
+// Schedule.PoseAt, and Scene.AddSchedule builds the nodes and parts as
+// Scene.AddLinkage does.
+//
 // # Lights and fades
 //
 // Scene.AddLight attaches a PointLight or a DirectionalLight to a node, as
