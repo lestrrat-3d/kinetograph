@@ -61,7 +61,7 @@ func Example_kinetograph_driven() {
 		fmt.Printf("failed to solve: %s\n", err)
 		return
 	}
-	body, err := decad.New().Extrude(s, s.Profiles()[0], decad.Distance{D: units.Millimeters(10), Dir: decad.Along})
+	body, err := decad.Extrude(ctx, decad.New(), s, s.Profiles()[0], decad.Distance{D: units.Millimeters(10), Dir: decad.Along})
 	if err != nil {
 		fmt.Printf("failed to extrude: %s\n", err)
 		return

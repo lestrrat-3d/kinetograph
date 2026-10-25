@@ -144,7 +144,7 @@ func TestFrameMatchesDecadPosedReference(t *testing.T) {
 	// it to solidlens directly: the same motion by the other route.
 	f, err := clip.Frame(t.Context(), frame)
 	require.NoError(t, err)
-	placed, err := body.PlacedCopy(t.Context(), f.Poses[0].Transform)
+	placed, err := decad.Copy(t.Context(), body, decad.WithCopyPlacement(f.Poses[0].Transform))
 	require.NoError(t, err)
 	mesh, err := placed.Tessellate(t.Context(), style.Chord, decad.WithVerification(decad.VerifyNone))
 	require.NoError(t, err)

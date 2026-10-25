@@ -44,7 +44,7 @@ func barPrism(ctx context.Context, doc *decad.Document, p, q r3.Vec) (*decad.Bod
 	if _, err := s.Solve(ctx); err != nil {
 		return nil, err
 	}
-	return doc.Extrude(s, s.Profiles()[0], decad.Distance{D: units.Millimeters(8), Dir: decad.Along})
+	return decad.Extrude(ctx, doc, s, s.Profiles()[0], decad.Distance{D: units.Millimeters(8), Dir: decad.Along})
 }
 
 // A decad linkage with a closed loop is filmed through a decad.Schedule. The

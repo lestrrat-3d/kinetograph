@@ -42,7 +42,7 @@ func plateBody(ctx context.Context) (*decad.Body, error) {
 	if err != nil {
 		return nil, err
 	}
-	plate, err := doc.Extrude(s, profile,
+	plate, err := decad.Extrude(ctx, doc, s, profile,
 		decad.Distance{D: units.Millimeters(plateThickness), Dir: decad.Along})
 	if err != nil {
 		return nil, fmt.Errorf("extrude the plate: %w", err)
@@ -94,7 +94,7 @@ func ringBody(ctx context.Context) (*decad.Body, error) {
 		return nil, err
 	}
 	axis := decad.SketchLine{Start: decad.Point2{U: 0, V: 0}, End: decad.Point2{U: 0, V: 1}}
-	ring, err := decad.New().Revolve(s, profile, axis, decad.FullRevolution{})
+	ring, err := decad.Revolve(ctx, decad.New(), s, profile, axis, decad.FullRevolution{})
 	if err != nil {
 		return nil, fmt.Errorf("revolve the ring: %w", err)
 	}
@@ -120,7 +120,7 @@ func cylinder(
 	if err != nil {
 		return nil, err
 	}
-	return doc.Extrude(s, profile, extent)
+	return decad.Extrude(ctx, doc, s, profile, extent)
 }
 
 // validProfile picks the one region a single-loop sketch bounds.

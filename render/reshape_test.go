@@ -37,7 +37,7 @@ func centeredBlock(ctx context.Context, w float64) (*decad.Body, error) {
 	if _, err := s.Solve(ctx); err != nil {
 		return nil, err
 	}
-	return decad.New().Extrude(s, s.Profiles()[0], decad.Distance{D: units.Millimeters(10), Dir: decad.Along})
+	return decad.Extrude(ctx, decad.New(), s, s.Profiles()[0], decad.Distance{D: units.Millimeters(10), Dir: decad.Along})
 }
 
 // widthBuilder builds centeredBlock(params["width"]) and counts its calls. It

@@ -1387,7 +1387,7 @@ The blob-centroid assertions read what the renderer drew rather than re-deriving
 change to solidlens's camera model fails them without kinetograph having copied that model.
 
 The decad-posed reference is the real producer through the real consumer: the test poses the block with
-`Body.PlacedCopy(t)` in decad, tessellates that body and renders it with solidlens directly, then renders the
+`decad.Copy` with `decad.WithCopyPlacement(t)`, tessellates that body and renders it with solidlens directly, then renders the
 same block through kinetograph at the same frame time. decad re-evaluates the payload under the motion, so the
 two vertex sets agree only to rounding, and the comparison is pixel-wise with the slack above rather than
 byte-wise.
