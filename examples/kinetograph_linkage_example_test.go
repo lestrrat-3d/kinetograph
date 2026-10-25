@@ -29,7 +29,7 @@ func armBlock(ctx context.Context, doc *decad.Document, x0, x1 float64) (*decad.
 	if _, err := s.Solve(ctx); err != nil {
 		return nil, err
 	}
-	return doc.Extrude(s, s.Profiles()[0], decad.Distance{D: units.Millimeters(10), Dir: decad.Along})
+	return decad.Extrude(ctx, doc, s, s.Profiles()[0], decad.Distance{D: units.Millimeters(10), Dir: decad.Along})
 }
 
 // A decad linkage is filmed along its drive. Each link's node takes the pose

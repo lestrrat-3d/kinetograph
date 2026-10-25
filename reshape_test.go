@@ -31,7 +31,7 @@ func blockBody(ctx context.Context, x0, y0, x1, y1 float64, height units.Value) 
 	if _, err := s.Solve(ctx); err != nil {
 		return nil, err
 	}
-	return decad.New().Extrude(s, s.Profiles()[0], decad.Distance{D: height, Dir: decad.Along})
+	return decad.Extrude(ctx, decad.New(), s, s.Profiles()[0], decad.Distance{D: height, Dir: decad.Along})
 }
 
 // blockBuilder builds a block centred on the Z axis, params["width"] along X

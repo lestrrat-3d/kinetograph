@@ -69,7 +69,7 @@ func openTube(tb testing.TB) *decad.Body {
 	rect := s.CreateRectangle(-5, -5, 5, 5)
 	s.Fix(rect.A)
 	p := decadtest.SolveRegion(tb, s)
-	body, err := decad.New().Extrude(s, p, decad.Distance{D: units.Millimeters(10), Dir: decad.Along}, decad.WithSurfaceResult())
+	body, err := decad.Extrude(tb.Context(), decad.New(), s, p, decad.Distance{D: units.Millimeters(10), Dir: decad.Along}, decad.WithSurfaceResult())
 	require.NoError(tb, err)
 	return body
 }
