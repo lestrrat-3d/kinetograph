@@ -3,7 +3,7 @@ module github.com/lestrrat-3d/kinetograph
 go 1.27.3
 
 require (
-	github.com/lestrrat-3d/decad v0.0.0-20261025135834-b56391946067
+	github.com/lestrrat-3d/decad v0.0.0-20261025214635-ad0dda488ca5
 	github.com/lestrrat-3d/r3 v0.0.0-20261014125509-3c90eee135e1
 	github.com/lestrrat-3d/sketch v0.0.0-20261025131903-b8ce0f76ca74
 	github.com/lestrrat-3d/solidlens v0.0.0-20260926143114-9a324f5bb98b
